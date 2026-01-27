@@ -150,7 +150,20 @@ def insert_chunks(paper_identifier: str, chunks: List[str], metadata: Dict = Non
         # Flatten lists for Chroma (e.g. authors)
         if isinstance(m.get('authors'), list):
             m['authors'] = ", ".join(m['authors'])
-        metadatas.append(m)
+        
+        # CRITICAL: Sanitize metadata for ChromaDB
+        # ChromaDB only accepts str, int, float, bool - not None or complex types
+        sanitized = {}
+        for key, value in m.items():
+            if value is None:
+                sanitized[key] = ""  # Convert None to empty string
+            elif isinstance(value, (str, int, float, bool)):
+                sanitized[key] = value
+            elif isinstance(value, list):
+                sanitized[key] = ", ".join(str(v) for v in value)
+            else:
+                sanitized[key] = str(value)  # Convert other types to string
+        metadatas.append(sanitized)
         
     collection.add(
         documents=chunks,
