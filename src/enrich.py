@@ -76,55 +76,63 @@ def extract_query_from_pdf(filepath: str) -> str:
                         return f"DOI:{doi}"
                     
                 lines = first_page.split('\n')
-                # Take first 2-3 non-empty lines that aren't junk
-                clean_lines = []
-                for line in lines[:25]: # Scan deeper (top 25 lines)
-                    line = line.strip()
-                    if len(line) < 5: continue # Skip very short lines
-                    
-                    line_lower = line.lower()
-                    # Junk keywords filters
-                    junk_terms = [
-                        "arxiv", "issn", "vol.", "no.", "downloaded", "http", "pii:", "copyright", 
-                        "journal of", "available at", "elsevier", "sciencedirect", "www.", "doi:",
-                        "university", "department", "school", "college", "institute", "faculty",
-                        "working paper", "discussion paper", "seminar", "conference", "draft", 
-                        "january", "february", "march", "april", "may", "june", 
-                        "july", "august", "september", "october", "november", "december",
-                        "received", "accepted", "published", "online", "open access"
-                    ]
-                    
-                    if any(x in line_lower for x in junk_terms): 
-                        continue
-                    
-                    # Stop if we hit "Abstract" or "Introduction"
-                    if "abstract" in line_lower or "introduction" in line_lower:
-                        break
-                        
-                    clean_lines.append(line)
-                    # Title usually spans 1-2 lines. If we got 2 good lines, stop to avoid picking up authors.
-                    if len(clean_lines) >= 2: break 
                 
-                # Validation: If we only extracted weird codes or numbers, fail
+                def extract_candidates(lines, strict=True):
+                    found = []
+                    for line in lines: # Scan provided lines
+                        line = line.strip()
+                        if len(line) < 5: continue 
+                        
+                        line_lower = line.lower()
+                        
+                        # Junk keywords filters
+                        if strict:
+                            junk_terms = [
+                                "arxiv", "issn", "vol.", "no.", "downloaded", "http", "pii:", "copyright", 
+                                "journal of", "available at", "elsevier", "sciencedirect", "www.", "doi:",
+                                "university", "department", "school", "college", "institute", "faculty",
+                                "working paper", "discussion paper", "seminar", "conference", "draft", 
+                                "january", "february", "march", "april", "may", "june", 
+                                "july", "august", "september", "october", "november", "december",
+                                "received", "accepted", "published", "online", "open access"
+                            ]
+                        else:
+                            # Loose filter: only skip obvious metadata junk
+                            junk_terms = ["http", "www", "doi:", "copyright", "downloaded"]
+
+                        if any(x in line_lower for x in junk_terms): 
+                            continue
+                        
+                        # Stop if we hit "Abstract" or "Introduction"
+                        if "abstract" in line_lower or "introduction" in line_lower:
+                            break
+                            
+                        found.append(line)
+                        if len(found) >= 2: break 
+                    return found
+
+                # Pass 1: Strict Scan (Top 25 lines)
+                clean_lines = extract_candidates(lines[:25], strict=True)
+                
+                # Pass 2: Loose Scan (if Strict failed) - Maybe title contained "University" or date?
+                if not clean_lines:
+                     clean_lines = extract_candidates(lines[:25], strict=False)
+
+                # Validation
                 if clean_lines:
                     candidate = " ".join(clean_lines)
                     
-                    # Reject if it looks like PII code even if keyword missed (e.g. S0022-...)
                     if "pii:" in candidate.lower() or "s0" in candidate.lower() and len(candidate) < 30:
                          return None
-                         
-                    # If candidate is too short or looks like just numbers/codes
                     if len(candidate) < 10 or re.match(r'^[0-9\.\-\:\s]+$', candidate):
                         return None 
-                    
-                    # Ensure it has letters
                     if not re.search(r'[a-zA-Z]', candidate):
                         return None
                         
                     return candidate
                     
     except Exception as e:
-        print(f"Error reading PDF {filepath}: {e}")
+        pass
         
     return None
 
@@ -134,23 +142,33 @@ def enrich_single_paper(paper: Dict) -> Tuple[str, bool, str]:
     Enrich a single paper's metadata.
     Returns: (title, success, message)
     """
+    
+    def clean_filename(fname):
+        name = os.path.basename(fname).replace('.pdf', '')
+        # Split CamelCase: "PennStBerkeley" -> "Penn St Berkeley"
+        name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
+        # Replace separators
+        name = name.replace("_", " ").replace("-", " ")
+        return name
+
     current_title = paper.get('title', 'Unknown')
     source_path = paper.get('source')
     
     # Determine best search query
-    search_query = current_title
+    # Default to improving the current title (which might be the filename)
+    search_query = clean_filename(current_title) if current_title == os.path.basename(str(source_path or "")) else current_title
     
     # If we have a local PDF, try to extract a better title from it
     extracted_source = "Filename"
     if source_path and str(source_path).endswith('.pdf'):
-        # Just use simple filename cleaning as baseline
-        # search_query = os.path.basename(source_path).replace('.pdf', '')
-        
         # Try advanced extraction
         content_query = extract_query_from_pdf(source_path)
         if content_query:
             search_query = content_query
             extracted_source = "PDF Content"
+        else:
+             # Fallback to smart filename cleaning logic
+             search_query = clean_filename(source_path)
     
     try:
         resolved = resolve_paper_metadata(search_query)
