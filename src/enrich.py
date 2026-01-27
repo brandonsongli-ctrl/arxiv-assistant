@@ -141,6 +141,7 @@ def enrich_single_paper(paper: Dict) -> Tuple[str, bool, str]:
     search_query = current_title
     
     # If we have a local PDF, try to extract a better title from it
+    extracted_source = "Filename"
     if source_path and str(source_path).endswith('.pdf'):
         # Just use simple filename cleaning as baseline
         # search_query = os.path.basename(source_path).replace('.pdf', '')
@@ -149,17 +150,18 @@ def enrich_single_paper(paper: Dict) -> Tuple[str, bool, str]:
         content_query = extract_query_from_pdf(source_path)
         if content_query:
             search_query = content_query
+            extracted_source = "PDF Content"
     
     try:
         resolved = resolve_paper_metadata(search_query)
         
         if resolved.get('found'):
             chunks_updated = update_paper_metadata(current_title, resolved)
-            return (current_title, True, f"Updated {chunks_updated} chunks (Match: {resolved['title'][:30]}...)")
+            return (current_title, True, f"Updated {chunks_updated} chunks (Source: {extracted_source}, Matched: {resolved['title'][:30]}...)")
         else:
-            return (current_title, False, f"No match for query: {search_query[:30]}...")
+            return (current_title, False, f"No match. Query ({extracted_source}): '{search_query[:50]}...'")
     except Exception as e:
-        return (current_title, False, str(e))
+        return (current_title, False, f"Error: {str(e)}")
 
 
 def enrich_all_papers(progress_callback=None) -> Dict:
