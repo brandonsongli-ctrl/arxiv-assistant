@@ -78,13 +78,23 @@ def extract_query_from_pdf(filepath: str) -> str:
                 lines = first_page.split('\n')
                 # Take first 2-3 non-empty lines that aren't junk
                 clean_lines = []
-                for line in lines[:15]: # Check top 15 lines
+                for line in lines[:25]: # Scan deeper (top 25 lines)
                     line = line.strip()
-                    if len(line) < 4: continue # Skip page numbers etc
+                    if len(line) < 5: continue # Skip very short lines
                     
                     line_lower = line.lower()
-                    # Junk keywords
-                    if any(x in line_lower for x in ["arxiv", "issn", "vol.", "no.", "downloaded", "http", "pii:", "copyright", "journal of", "available at", "elsevier", "sciencedirect", "www."]): 
+                    # Junk keywords filters
+                    junk_terms = [
+                        "arxiv", "issn", "vol.", "no.", "downloaded", "http", "pii:", "copyright", 
+                        "journal of", "available at", "elsevier", "sciencedirect", "www.", "doi:",
+                        "university", "department", "school", "college", "institute", "faculty",
+                        "working paper", "discussion paper", "seminar", "conference", "draft", 
+                        "january", "february", "march", "april", "may", "june", 
+                        "july", "august", "september", "october", "november", "december",
+                        "received", "accepted", "published", "online", "open access"
+                    ]
+                    
+                    if any(x in line_lower for x in junk_terms): 
                         continue
                     
                     # Stop if we hit "Abstract" or "Introduction"
@@ -92,7 +102,8 @@ def extract_query_from_pdf(filepath: str) -> str:
                         break
                         
                     clean_lines.append(line)
-                    if len(clean_lines) >= 3: break # Take top 3 clean lines
+                    # Title usually spans 1-2 lines. If we got 2 good lines, stop to avoid picking up authors.
+                    if len(clean_lines) >= 2: break 
                 
                 # Validation: If we only extracted weird codes or numbers, fail
                 if clean_lines:
@@ -100,12 +111,16 @@ def extract_query_from_pdf(filepath: str) -> str:
                     
                     # Reject if it looks like PII code even if keyword missed (e.g. S0022-...)
                     if "pii:" in candidate.lower() or "s0" in candidate.lower() and len(candidate) < 30:
-                         # Likely a code line
                          return None
                          
                     # If candidate is too short or looks like just numbers/codes
                     if len(candidate) < 10 or re.match(r'^[0-9\.\-\:\s]+$', candidate):
                         return None 
+                    
+                    # Ensure it has letters
+                    if not re.search(r'[a-zA-Z]', candidate):
+                        return None
+                        
                     return candidate
                     
     except Exception as e:
