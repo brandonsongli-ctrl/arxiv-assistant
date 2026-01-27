@@ -479,7 +479,18 @@ def _extract_structural_patterns(documents: List[str], metadatas: List[Dict]) ->
             # Look for common academic triggers like " that "
             # This allows finding patterns we didn't hardcode (e.g., "results indicate that", "we checked that")
             
+            # Filter out junk sentences first
             sent_lower = sentence.lower()
+            
+            # Common junk phrases in PDFs
+            junk_keywords = ["preprint", "copyedited", "doi", "downloaded", "personal use", "copyright", 
+                           "http", "www.", "vol.", "no.", "pp.", "issn", "isbn", "url", "email", 
+                           "university", "press", "journal", "review", "accepted", "submitted", 
+                           "resubmitted", "forthcoming", "manuscript", "online", "access", "license"]
+                           
+            if any(k in sent_lower for k in junk_keywords):
+                continue
+            
             tokens = re.findall(r'\b\w+\b', sent_lower)
             
             # Strategy A: "Trigger word" antecedents (e.g. word + word + "that")
@@ -489,8 +500,8 @@ def _extract_structural_patterns(documents: List[str], metadatas: List[Dict]) ->
                     if idx >= 2:
                         # Capture trigram ending in "that" (e.g., "we show that")
                         trigram = f"{tokens[idx-2]} {tokens[idx-1]} that"
-                        # Filter junk: avoid if contains numbers or stop words only
-                        if not re.match(r'.*\d.*', trigram):
+                        # Filter junk: avoid if contains numbers (e.g. "table 3 that") or stops
+                        if not re.match(r'.*\d.*', trigram) and not any(jw in trigram for jw in junk_keywords):
                             discovered_ngrams[trigram]["count"] += 1
                             if len(discovered_ngrams[trigram]["examples"]) < 5:
                                 discovered_ngrams[trigram]["examples"].append({
@@ -502,7 +513,7 @@ def _extract_structural_patterns(documents: List[str], metadatas: List[Dict]) ->
             if len(tokens) >= 3:
                 starter = f"{tokens[0]} {tokens[1]} {tokens[2]}"
                 # Common stop words to avoid as purely "the of and"
-                if starter not in ["in this paper", "the rest of"]: # Avoid dupes with templates
+                if starter not in ["in this paper", "the rest of"] and not any(jw in starter for jw in junk_keywords): 
                     discovered_ngrams[starter]["count"] += 1
                     if len(discovered_ngrams[starter]["examples"]) < 5:
                          discovered_ngrams[starter]["examples"].append({
