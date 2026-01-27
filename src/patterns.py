@@ -28,10 +28,17 @@ def get_nlp():
 
 # Common academic phrase patterns to look for (100+ patterns)
 ACADEMIC_PATTERNS = [
-    # ============= ARGUMENTATION =============
-    r"we (show|demonstrate|prove|establish|argue|claim|propose|suggest|conjecture|hypothesize) that",
-    r"it (follows|is clear|can be shown|is evident|is straightforward|is easy to see|is immediate|turns out) that",
-    r"(this|these|the above) (implies?|suggests?|indicates?|shows?|reveals?|establishes?) that",
+    # ============= ARGUMENTATION & LOGIC =============
+    r"(we (show|demonstrate|prove|establish|argue|claim|conjecture|hypothesize) that)",
+    r"(it (follows|is clear|can be shown|is evident|is straightforward|is easy to see|is immediate|turns out) that)",
+    r"((this|the above|these results?) (implies?|suggests?|indicates?|shows?|reveals?|establishes?) that)",
+    r"((implies|suggests|indicates) that)", # Catch standalone occurrences too
+    r"(consistent with (the hypothesis|our results|the prediction))",
+    r"(support (for|of) the (hypothesis|theory|claim|view))",
+    r"(reasoning (suggests|implies) that)",
+    r"(in (support|favor) of)",
+    r"(argue (that|for|against))",
+    r"(evidence (suggests|indicates|shows|supports))",
     r"(in contrast|by contrast|on the other hand|conversely|alternatively)",
     r"(moreover|furthermore|in addition|additionally|also|equally important)",
     r"(however|nevertheless|nonetheless|yet|but|still|even so)",
@@ -404,7 +411,9 @@ def _extract_structural_patterns(documents: List[str], metadatas: List[Dict]) ->
         (r"^Time is (discrete|continuous) ", "[MODEL] Time Structure"),
         
         # --- Logic / Arguments ---
-        (r"^We (show|prove|demonstrate|establish|argue) that ", "[ARGUMENT] We [VERB] that [CLAIM]"),
+        (r"^We (show|prove|demonstrate|establish|argue|claim) that ", "[ARGUMENT] We [VERB] that [CLAIM]"),
+        (r"^(This|The result|The analysis) (implies|shows|suggests|indicates|reveals) that ", "[ARGUMENT] This [VERB] that [CLAIM]"),
+        (r"^It (follows|is clear|is evident) that ", "[ARGUMENT] It [VERB] that [CLAIM]"),
         (r"^(However|Nevertheless|Nonetheless), ", "[LOGIC] [CONTRAST], [COUNTERPOINT]"),
         (r"^(Moreover|Furthermore|In addition|Additionally), ", "[LOGIC] [CONNECTOR], [EXTENSION]"),
         (r"^(Therefore|Thus|Hence|Consequently|It follows that), ", "[LOGIC] [CONCLUSION], [RESULT]"),
@@ -435,37 +444,95 @@ def _extract_structural_patterns(documents: List[str], metadatas: List[Dict]) ->
     sample_size = min(len(documents), 5000)
     step = max(1, len(documents) // sample_size)
     
+    # Discovery counters
+    discovered_ngrams = defaultdict(lambda: {"count": 0, "examples": [], "source": ""})
+    
     for i in range(0, len(documents), step):
         doc = documents[i]
         if not doc:
             continue
             
         sentences = _fast_sentence_split(doc)
-        # Verify metadata alignment (documents[i] matches metadatas[i])
         source = metadatas[i].get('title', 'Unknown') if metadatas and i < len(metadatas) else 'Unknown'
         
         for sentence in sentences:
             if len(sentence) < 20: continue 
             
+            # 1. Check existing structural templates
             for pattern, template in STRUCTURAL_TEMPLATES:
                 if re.match(pattern, sentence, re.IGNORECASE):
                     structural_counts[template]["count"] += 1
                     structural_counts[template]["template"] = template
-                    # Increased limit from 3 to 10 examples
                     if len(structural_counts[template]["examples"]) < 10:
-                        # Clean sentence slightly
                         clean_sent = sentence.replace("\n", " ").strip()
-                        # Avoid duplicates
                         if not any(ex["sentence"] == clean_sent for ex in structural_counts[template]["examples"]):
                             structural_counts[template]["examples"].append({
-                                "sentence": clean_sent[:300], # Capture slightly more text
+                                "sentence": clean_sent[:300], 
                                 "source": source
                             })
                     break  # One template per sentence
+            
+            # 2. AUTOMATIC DISCOVERY: N-gram Analysis
+            # Look for common academic triggers like " that "
+            # This allows finding patterns we didn't hardcode (e.g., "results indicate that", "we checked that")
+            
+            sent_lower = sentence.lower()
+            tokens = re.findall(r'\b\w+\b', sent_lower)
+            
+            # Strategy A: "Trigger word" antecedents (e.g. word + word + "that")
+            if " that " in sent_lower:
+                indices = [i for i, x in enumerate(tokens) if x == "that"]
+                for idx in indices:
+                    if idx >= 2:
+                        # Capture trigram ending in "that" (e.g., "we show that")
+                        trigram = f"{tokens[idx-2]} {tokens[idx-1]} that"
+                        # Filter junk: avoid if contains numbers or stop words only
+                        if not re.match(r'.*\d.*', trigram):
+                            discovered_ngrams[trigram]["count"] += 1
+                            if len(discovered_ngrams[trigram]["examples"]) < 5:
+                                discovered_ngrams[trigram]["examples"].append({
+                                    "sentence": sentence[:200],
+                                    "source": source
+                                })
+            
+            # Strategy B: Sentence Starters (First 3 words)
+            if len(tokens) >= 3:
+                starter = f"{tokens[0]} {tokens[1]} {tokens[2]}"
+                # Common stop words to avoid as purely "the of and"
+                if starter not in ["in this paper", "the rest of"]: # Avoid dupes with templates
+                    discovered_ngrams[starter]["count"] += 1
+                    if len(discovered_ngrams[starter]["examples"]) < 5:
+                         discovered_ngrams[starter]["examples"].append({
+                            "sentence": sentence[:200],
+                            "source": source
+                        })
+
+    # Filter discovered patterns (noise reduction)
+    min_count = max(5, int(len(documents) * 0.01)) # At least 5 or 1% of corpus
     
-    # Convert to regular dict sorted by count
+    valid_discovered = {}
+    for phrase, data in discovered_ngrams.items():
+        if data['count'] >= min_count:
+            # Auto-categorize based on keywords
+            cat = "Other"
+            if " show " in phrase or " prove " in phrase or " argue " in phrase: cat = "ARGUMENT"
+            elif " implies " in phrase or " suggests " in phrase: cat = "ARGUMENT"
+            elif " we " in phrase: cat = "METHOD/ACTION"
+            elif " result " in phrase or " find " in phrase: cat = "RESULT"
+            
+            # Format as structural template
+            template_name = f"[{cat}] {phrase}..."
+            valid_discovered[template_name] = data
+            
+    # Merge Discovered into Structural
+    # (Structural takes precedence if overlap)
+    final_structural = dict(structural_counts)
+    for k, v in valid_discovered.items():
+        if k not in final_structural:
+            final_structural[k] = v
+            
     return dict(sorted(
-        {k: dict(v) for k, v in structural_counts.items()}.items(),
+        {k: dict(v) for k, v in final_structural.items()}.items(),
         key=lambda x: x[1]['count'],
         reverse=True
     ))
