@@ -325,17 +325,51 @@ with tab5:
             
             struct_patterns = library.get('structural_patterns', {})
             if struct_patterns:
-                # Top 20 templates
-                top_templates = sorted(struct_patterns.items(), key=lambda x: x[1]['count'], reverse=True)[:20]
+                # Group by Category (parsed from [CAT] prefix)
+                grouped_templates = {}
+                for template, data in struct_patterns.items():
+                    # Extract [CATEGORY] if present
+                    import re
+                    match = re.match(r"^\[(\w+)\] (.+)", template)
+                    if match:
+                        cat = match.group(1)
+                        clean_template = match.group(2)
+                        if cat not in grouped_templates:
+                            grouped_templates[cat] = []
+                        grouped_templates[cat].append((clean_template, data))
+                    else:
+                        if "Other" not in grouped_templates:
+                            grouped_templates["Other"] = []
+                        grouped_templates["Other"].append((template, data))
                 
-                for template, data in top_templates:
-                    with st.expander(f"**{template}** ({data['count']} matches)"):
-                        st.write("**Examples:**")
-                        for ex in data.get('examples', []):
-                            st.info(f"_{ex['sentence']}_")
-                            st.caption(f"Source: {ex['source']}")
+                # Display by Category
+                # Defined sort order for categories
+                cat_order = ["INTRO", "MODEL", "ARGUMENT", "LOGIC", "RESULT", "ECON", "DISC", "LIT", "META", "Other"]
+                
+                for cat in cat_order:
+                    if cat in grouped_templates:
+                        with st.expander(f"📚 {cat} Patterns ({len(grouped_templates[cat])} types)"):
+                            # Sort by count
+                            sorted_patterns = sorted(grouped_templates[cat], key=lambda x: x[1]['count'], reverse=True)
+                            
+                            for template, data in sorted_patterns:
+                                if data['count'] > 0:
+                                    st.markdown(f"**{template}** — `{data['count']} matches`")
+                                    
+                                    # Show examples in a small scrollable area or just list them
+                                    examples = data.get('examples', [])
+                                    if examples:
+                                        for i, ex in enumerate(examples):
+                                            # Highlight the matched part? For now just italics
+                                            st.info(f"_{ex['sentence']}_")
+                                            st.caption(f"Source: {ex['source']}")
+                                            if i >= 4: # Show max 5 by default per template in this view to save space
+                                                if len(examples) > 5:
+                                                    st.caption(f"... and {len(examples)-5} more")
+                                                break
+                                    st.divider()
             else:
-                st.info("No structural patterns found yet. Try rebuilding the library.")
+                st.info("No structural patterns found yet. Click 'Build/Refresh Pattern Library' above to analyze.")
 
 with tab6:
     st.header("🔬 Topic Clusters")

@@ -233,19 +233,27 @@ def find_pattern_matches(text: str) -> List[Dict]:
 
 def categorize_pattern(pattern: str) -> str:
     """Categorize a pattern into a semantic group."""
-    if any(word in pattern for word in ['show', 'demonstrate', 'prove', 'argue', 'claim', 'establish', 'propose', 'suggest']):
+    # Econ/Game Theory - Check FIRST to avoid generic classification
+    if any(word in pattern for word in ['incentive', 'rationality', 'condition', 'utility', 'payoff', 
+                                      'profit', 'crossing', 'monotone', 'matching', 'information', 
+                                      'mechanism', 'principal', 'agent', 'moral', 'adverse', 'risk',
+                                      'belief', 'posterior', 'prior', 'strategy', 'nash', 'bayes', 
+                                      'equilibrium', 'allocation', 'surplus', 'welfare']):
+        return 'Econ/Game Theory'
+    elif any(word in pattern for word in ['show', 'demonstrate', 'prove', 'argue', 'claim', 'establish', 'propose', 'suggest', 'implies', 'indicates']):
         return 'Argumentation'
     elif any(word in pattern for word in ['contrast', 'however', 'nevertheless', 'yet', 'conversely', 'unlike', 'differs']):
         return 'Contrast'
-    elif any(word in pattern for word in ['therefore', 'thus', 'hence', 'consequently', 'result']):
+    elif any(word in pattern for word in ['therefore', 'thus', 'hence', 'consequently', 'result', 'follows']):
         return 'Conclusion'
     elif any(word in pattern for word in ['moreover', 'furthermore', 'addition']):
         return 'Addition'
-    elif any(word in pattern for word in ['let', 'define', 'denote', 'suppose', 'assume']):
-        return 'Definition'
-    elif any(word in pattern for word in ['paper', 'section', 'contribution', 'finding']):
+    elif any(word in pattern for word in ['let', 'define', 'denote', 'suppose', 'assume', 'consider']):
+        return 'Definition/Setup'
+    elif any(word in pattern for word in ['paper', 'section', 'contribution', 'finding', 'organized']):
         return 'Structure'
-    elif any(word in pattern for word in ['optimal', 'equilibrium', 'exists', 'unique', 'efficient', 'necessary', 'outcome', 'allocation']):
+    elif any(word in pattern for word in ['optimal', 'exists', 'unique', 'efficient', 'necessary', 'outcome', 'solution']):
+        # 'equilibrium' moved to Econ
         return 'Results'
     elif any(word in pattern for word in ['gap', 'question', 'attention', 'fills', 'contributes', 'extends']):
         return 'Motivation/Gap'
@@ -253,10 +261,8 @@ def categorize_pattern(pattern: str) -> str:
         return 'Methodology'
     elif any(word in pattern for word in ['limitations', 'scope', 'future', 'extensions']):
         return 'Limitations/Future'
-    elif any(word in pattern for word in ['incentive', 'rationality', 'condition', 'utility', 'payoff', 'profit', 'crossing', 'monotone', 'matching', 'information', 'mechanism', 'principal', 'moral', 'adverse']):
-        return 'Econ/Game Theory'
     else:
-        return 'Other'
+        return 'General Academic'
 
 
 def build_pattern_library(data_dir: str = None) -> Dict:
@@ -380,32 +386,52 @@ def _extract_structural_patterns(documents: List[str], metadatas: List[Dict]) ->
     These are templates like "We [VERB] that [CLAUSE]" or "The [NOUN] is [ADJ]"
     """
     # Common structural templates in academic writing
+    # Common structural templates in academic writing (Regex, Template Name, Category)
+    # Categories: [Introduction], [Model], [Results], [discussion], [logic], [literature], [definition]
     STRUCTURAL_TEMPLATES = [
-        (r"^We (show|prove|demonstrate|establish|argue) that ", "We [VERB] that [CLAIM]"),
-        (r"^This (paper|article|study|work) (shows|demonstrates|proves|establishes|argues) ", "This [NOUN] [VERB] [CLAIM]"),
-        (r"^The (main|key|central|primary) (result|contribution|finding|insight) is ", "The [ADJ] [NOUN] is [CLAIM]"),
-        (r"^(In this|This) (paper|section|article), we ", "[INTRO], we [ACTION]"),
-        (r"^(Moreover|Furthermore|In addition|Additionally), ", "[CONNECTOR], [EXTENSION]"),
-        (r"^(However|Nevertheless|Nonetheless), ", "[CONTRAST], [COUNTERPOINT]"),
-        (r"^(Therefore|Thus|Hence|Consequently), ", "[CONCLUSION], [RESULT]"),
-        (r"^Let (\w+) (be|denote) ", "Let [VAR] [DEF] [OBJECT]"),
-        (r"^(Assume|Suppose) (that )?", "[ASSUMPTION] [CONDITION]"),
-        (r"^(If|When|Whenever) .+ then ", "[CONDITION] then [CONSEQUENCE]"),
-        (r"^There exists (a |an )?(\w+) such that ", "There exists [OBJECT] such that [PROPERTY]"),
-        (r"^(For any|For all|For each) \w+ ", "For [QUANTIFIER] [VAR], [STATEMENT]"),
-        (r"^The (optimal|equilibrium|unique|first-best) ", "The [QUALIFIER] [SOLUTION]"),
-        (r"^(In equilibrium|At the optimum), ", "[STATE], [PROPERTY]"),
-        (r"^(It is|It can be) (easy|straightforward|immediate) to (see|show|verify) ", "It is [ADJ] to [VERB] [CLAIM]"),
-        (r"^(The proof|Proof) (is|appears|can be found) in ", "[PROOF] [LOCATION]"),
-        (r"^(Note|Notice|Observe|Recall) that ", "[ATTENTION] that [FACT]"),
-        (r"^(Following|Building on|Extending) (\w+ )+\(\d{4}\)", "[REFERENCE] [PRIOR WORK]"),
-        (r"^(Intuitively|Roughly speaking|To see why), ", "[INTUITION], [EXPLANATION]"),
-        (r"^The (first|second|third|next|following) (step|stage|case) ", "The [ORD] [STEP] [ACTION]"),
+        # --- Introduction / Roadmap ---
+        (r"^(In this|This) (paper|section|article|chapter),? we ", "[INTRO] we [ACTION]"),
+        (r"^The (main|key|central|primary) (result|contribution|finding|insight) is ", "[INTRO] The [ADJ] [NOUN] is [CLAIM]"),
+        (r"^The paper is organized as follows", "[INTRO] Roadmap"),
+        (r"^(We|This paper) contributes? to (the literature|two strands)", "[LIT] Contribution"),
+        
+        # --- Model / Setup ---
+        (r"^(Consider|Suppose|Assume) (a|an) (model|economy|setting|environment) ", "[MODEL] Setup start"),
+        (r"^Let \[latex\].+\[\/latex\] denote ", "[MODEL] Notation"), # Plain text might not have latex tags, adjusted below
+        (r"^Let \w+ (denote|be) ", "[MODEL] Let [VAR] [DEF] [OBJECT]"),
+        (r"^(The )?(agent|principal|player) (observes|chooses|maximizes) ", "[MODEL] Agent Action"),
+        (r"^(Preferences|Utility) (are|is) (given by|defined as) ", "[MODEL] Utility Definition"),
+        (r"^Time is (discrete|continuous) ", "[MODEL] Time Structure"),
+        
+        # --- Logic / Arguments ---
+        (r"^We (show|prove|demonstrate|establish|argue) that ", "[ARGUMENT] We [VERB] that [CLAIM]"),
+        (r"^(However|Nevertheless|Nonetheless), ", "[LOGIC] [CONTRAST], [COUNTERPOINT]"),
+        (r"^(Moreover|Furthermore|In addition|Additionally), ", "[LOGIC] [CONNECTOR], [EXTENSION]"),
+        (r"^(Therefore|Thus|Hence|Consequently|It follows that), ", "[LOGIC] [CONCLUSION], [RESULT]"),
+        (r"^(If|When|Whenever) .+ then ", "[LOGIC] [CONDITION] then [CONSEQUENCE]"),
+        (r"^(It is|It can be) (easy|straightforward|immediate) to (see|show|verify) ", "[LOGIC] It is [ADJ] to [VERB] [CLAIM]"),
+        
+        # --- Results / Theorems ---
+        (r"^The (optimal|equilibrium|unique|first-best) (mechanism|contract|policy|allocation) ", "[RESULT] The [QUALIFIER] [SOLUTION]"),
+        (r"^(In equilibrium|At the optimum),? ", "[RESULT] [STATE], [PROPERTY]"),
+        (r"^(Proposition|Theorem|Lemma|Corollary) \d+ ", "[RESULT] Formal Statement"),
+        (r"^(Proof|The proof) (is|appears|can be found) in ", "[META] Proof Location"),
+        
+        # --- Mechanism Design / Econ Specific ---
+        (r"^(Incentive compatibility|IC) (implies|requires|constraint) ", "[ECON] IC Constraint"),
+        (r"^(Individual rationality|Participation) (implies|requires|constraint) ", "[ECON] IR Constraint"),
+        (r"^The (revelation principle|envelope theorem) ", "[ECON] Core Principle"),
+        (r"^(Under|Subject to) (information|asymmetric) ", "[ECON] Information Structure"),
+        
+        # --- Discussion ---
+        (r"^(Note|Notice|Observe|Recall) that ", "[DISC] [ATTENTION] that [FACT]"),
+        (r"^(Intuitively|Roughly speaking|To see why),? ", "[DISC] [INTUITION], [EXPLANATION]"),
+        (r"^(Unlike|In contrast to) ", "[DISC] Comparison"),
     ]
     
     structural_counts = defaultdict(lambda: {"count": 0, "examples": [], "template": ""})
     
-    # Sample documents for speed (every 10th chunk)
+    # Sample documents for speed (every 10th chunk, max 5000)
     sample_size = min(len(documents), 5000)
     step = max(1, len(documents) // sample_size)
     
@@ -415,18 +441,26 @@ def _extract_structural_patterns(documents: List[str], metadatas: List[Dict]) ->
             continue
             
         sentences = _fast_sentence_split(doc)
+        # Verify metadata alignment (documents[i] matches metadatas[i])
         source = metadatas[i].get('title', 'Unknown') if metadatas and i < len(metadatas) else 'Unknown'
         
         for sentence in sentences:
+            if len(sentence) < 20: continue 
+            
             for pattern, template in STRUCTURAL_TEMPLATES:
                 if re.match(pattern, sentence, re.IGNORECASE):
                     structural_counts[template]["count"] += 1
                     structural_counts[template]["template"] = template
-                    if len(structural_counts[template]["examples"]) < 3:
-                        structural_counts[template]["examples"].append({
-                            "sentence": sentence[:200],
-                            "source": source
-                        })
+                    # Increased limit from 3 to 10 examples
+                    if len(structural_counts[template]["examples"]) < 10:
+                        # Clean sentence slightly
+                        clean_sent = sentence.replace("\n", " ").strip()
+                        # Avoid duplicates
+                        if not any(ex["sentence"] == clean_sent for ex in structural_counts[template]["examples"]):
+                            structural_counts[template]["examples"].append({
+                                "sentence": clean_sent[:300], # Capture slightly more text
+                                "source": source
+                            })
                     break  # One template per sentence
     
     # Convert to regular dict sorted by count
