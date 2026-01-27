@@ -411,9 +411,12 @@ def _extract_structural_patterns(documents: List[str], metadatas: List[Dict]) ->
         (r"^Time is (discrete|continuous) ", "[MODEL] Time Structure"),
         
         # --- Logic / Arguments ---
-        (r"^We (show|prove|demonstrate|establish|argue|claim) that ", "[ARGUMENT] We [VERB] that [CLAIM]"),
-        (r"^(This|The result|The analysis) (implies|shows|suggests|indicates|reveals) that ", "[ARGUMENT] This [VERB] that [CLAIM]"),
-        (r"^It (follows|is clear|is evident) that ", "[ARGUMENT] It [VERB] that [CLAIM]"),
+        # REMOVED generic templates to favor specific Automatic Discovery (e.g. "We show that" instead of "We [VERB] that")
+        # (r"^We (show|prove|demonstrate|establish|argue|claim) that ", "[ARGUMENT] We [VERB] that [CLAIM]"),
+        # (r"^(This|The result|The analysis) (implies|shows|suggests|indicates|reveals) that ", "[ARGUMENT] This [VERB] that [CLAIM]"),
+        # (r"^It (follows|is clear|is evident) that ", "[ARGUMENT] It [VERB] that [CLAIM]"),
+        
+        # Keep these as they are good high-level connectors not always captured by n-grams
         (r"^(However|Nevertheless|Nonetheless), ", "[LOGIC] [CONTRAST], [COUNTERPOINT]"),
         (r"^(Moreover|Furthermore|In addition|Additionally), ", "[LOGIC] [CONNECTOR], [EXTENSION]"),
         (r"^(Therefore|Thus|Hence|Consequently|It follows that), ", "[LOGIC] [CONCLUSION], [RESULT]"),
