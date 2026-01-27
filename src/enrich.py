@@ -146,9 +146,13 @@ def enrich_single_paper(paper: Dict) -> Tuple[str, bool, str]:
     """
     
     def clean_filename(fname):
-        name = os.path.basename(fname).replace('.pdf', '')
+        if not fname: return ""
+        name = os.path.basename(str(fname)).replace('.pdf', '')
         # Split CamelCase: "PennStBerkeley" -> "Penn St Berkeley"
         name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
+        # Handle numbers: "Sept24" -> "Sept 24"
+        name = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', name)
+        name = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', name)
         # Replace separators
         name = name.replace("_", " ").replace("-", " ")
         return name
@@ -157,8 +161,9 @@ def enrich_single_paper(paper: Dict) -> Tuple[str, bool, str]:
     source_path = paper.get('source')
     
     # Determine best search query
-    # Default to improving the current title (which might be the filename)
-    search_query = clean_filename(current_title) if current_title == os.path.basename(str(source_path or "")) else current_title
+    # ALWAYS prepare a clean filename version as baseline fallback
+    filename_query = clean_filename(source_path) if source_path else current_title
+    search_query = filename_query
     
     # If we have a local PDF, try to extract a better title from it
     extracted_source = "Filename"
@@ -168,9 +173,6 @@ def enrich_single_paper(paper: Dict) -> Tuple[str, bool, str]:
         if content_query:
             search_query = content_query
             extracted_source = "PDF Content"
-        else:
-             # Fallback to smart filename cleaning logic
-             search_query = clean_filename(source_path)
     
     try:
         resolved = resolve_paper_metadata(search_query)
