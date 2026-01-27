@@ -5,6 +5,8 @@ Automatically enriches paper metadata (DOI, authors, year, journal) using extern
 """
 
 import time
+import os
+import re
 from typing import List, Dict, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from src import database
