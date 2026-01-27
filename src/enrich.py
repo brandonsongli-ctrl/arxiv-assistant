@@ -160,6 +160,33 @@ def enrich_single_paper(paper: Dict) -> Tuple[str, bool, str]:
     current_title = paper.get('title', 'Unknown')
     source_path = paper.get('source')
     
+    # ---------------------------------------------------------
+    # LEGACY DATA FIX: Resolve path if missing or 'manual_upload'
+    # ---------------------------------------------------------
+    if not source_path or source_path == 'manual_upload' or not os.path.exists(str(source_path)):
+        # Try to find file in default data dir
+        base_dir = os.path.dirname(os.path.dirname(__file__)) # src/..
+        data_dir = os.path.join(base_dir, 'data', 'pdfs')
+        
+        candidates = []
+        # Try entry_id which usually contains filename for manual uploads
+        entry_id = paper.get('entry_id', '')
+        if entry_id and entry_id.startswith('manual_'):
+             fname = entry_id.replace('manual_', '')
+             candidates.append(os.path.join(data_dir, fname))
+        
+        # Try current title if it looks like a filename
+        if current_title:
+             candidates.append(os.path.join(data_dir, current_title))
+             if not current_title.endswith('.pdf'):
+                 candidates.append(os.path.join(data_dir, current_title + ".pdf"))
+                 
+        for c in candidates:
+            if os.path.exists(c):
+                source_path = c
+                break
+    # ---------------------------------------------------------
+    
     # Determine best search query
     # ALWAYS prepare a clean filename version as baseline fallback
     filename_query = clean_filename(source_path) if source_path else current_title

@@ -45,8 +45,8 @@ def ingest_paper(pdf_path: str, metadata: Dict):
 
     # 2. Add/Get Paper Record
     # Ensure metadata has 'source'
-    if 'source' not in metadata:
-        metadata['source'] = 'manual_upload'
+    if 'source' not in metadata or metadata['source'] == 'manual_upload':
+        metadata['source'] = pdf_path
         
     paper_id = database.insert_paper(metadata)
     # print(f"Paper '{metadata.get('title')}' ID: {paper_id}")
