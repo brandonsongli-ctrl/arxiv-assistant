@@ -6,7 +6,7 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src import scraper, ingest, rag
-from src import bibtex, citations, patterns, clustering
+from src import bibtex, citations, patterns, clustering, database
 # review is imported lazily inside its tab to avoid circular import issues
 
 st.set_page_config(page_title="Local Academic Assistant", layout="wide")
