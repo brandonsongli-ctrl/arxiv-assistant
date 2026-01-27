@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  # The Streamlit Application
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    depends_on:
+      - db
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=academic_assistant
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      # Host for Ollama running on the host machine
+      - OLLAMA_HOST=http://host.docker.internal:11434/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Mount data directory to persist PDFs if downloaded
+      - ./data/pdfs:/app/data/pdfs
+      # Mount the correct ChromaDB source for migration
+      - ./data/chroma_db_restored:/app/data/chroma_db
+
+  # PostgreSQL Database with pgvector
+  db:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=academic_assistant
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
