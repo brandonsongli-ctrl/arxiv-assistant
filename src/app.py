@@ -167,8 +167,12 @@ if st.sidebar.button("🔄 Enrich All Papers"):
         
         if results['failed'] > 0:
             st.sidebar.warning(f"⚠️ {results['failed']} papers could not be matched.")
+            with st.sidebar.expander("Details"):
+                for detail in results['details']:
+                    if not detail['success']:
+                        st.caption(f"**{detail['title'][:20]}...**: {detail['message']}")
         
-        time.sleep(1)
+        time.sleep(2) # Give more time to read
         st.rerun()
 
 # Database Management Section
