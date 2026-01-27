@@ -243,6 +243,13 @@ def _is_title_similar(query: str, title: str, threshold: float = 0.2) -> bool:
     
     similarity = len(intersection) / len(union) if union else 0
     
+    # Subset match: If one title is mostly contained in the other
+    # Useful when query includes author name: "Strategic Thinking Crawford" vs "Strategic Thinking"
+    min_len = min(len(query_words), len(title_words))
+    subset_ratio = len(intersection) / min_len if min_len > 0 else 0
+    
+    return (similarity >= threshold) or (subset_ratio >= 0.8)
+    
     # Debug output (can be removed in production)
     # print(f"Similarity '{query[:30]}...' vs '{title[:30]}...': {similarity:.2f}")
     
