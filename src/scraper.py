@@ -193,20 +193,60 @@ def resolve_paper_metadata(query: str) -> Dict:
     
     # Try Semantic Scholar first
     result = _try_semantic_scholar(query)
-    if result.get("found"):
+    if result.get("found") and _is_title_similar(query, result.get("title", "")):
         return result
     
     # Fallback to OpenAlex (no rate limit, very reliable)
     result = _try_openalex(query)
-    if result.get("found"):
+    if result.get("found") and _is_title_similar(query, result.get("title", "")):
         return result
         
     # Fallback to CrossRef
     result = _try_crossref(query)
-    if result.get("found"):
+    if result.get("found") and _is_title_similar(query, result.get("title", "")):
         return result
         
     return {"found": False}
+
+
+def _is_title_similar(query: str, title: str, threshold: float = 0.2) -> bool:
+    """
+    Check if the returned title is similar enough to the query.
+    Uses word-based Jaccard similarity.
+    Low threshold (0.2) because:
+      - Query is often just filename with underscores/dashes
+      - Title is the full paper title
+      - We just want to avoid completely wrong matches
+    """
+    if not query or not title:
+        return False
+    
+    # Normalize: lowercase, remove punctuation, split into words
+    import re
+    def normalize(text):
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', ' ', text)  # Remove punctuation
+        words = set(text.split())
+        # Remove very short words and numbers-only tokens
+        words = {w for w in words if len(w) > 2 and not w.isdigit()}
+        return words
+    
+    query_words = normalize(query)
+    title_words = normalize(title)
+    
+    if not query_words or not title_words:
+        return False
+    
+    # Jaccard similarity: intersection / union
+    intersection = query_words & title_words
+    union = query_words | title_words
+    
+    similarity = len(intersection) / len(union) if union else 0
+    
+    # Debug output (can be removed in production)
+    # print(f"Similarity '{query[:30]}...' vs '{title[:30]}...': {similarity:.2f}")
+    
+    return similarity >= threshold
 
 
 def _try_semantic_scholar(query: str) -> Dict:
