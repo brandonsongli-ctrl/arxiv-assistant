@@ -63,11 +63,17 @@ def extract_query_from_pdf(filepath: str) -> str:
         if len(reader.pages) > 0:
             first_page = reader.pages[0].extract_text()
             if first_page:
-                # A. Check for DOI explicitly
+                # A. Check for DOI - but ONLY in top portion of page (avoid cited paper DOIs)
                 import re
-                doi_match = re.search(r'10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+', first_page)
+                # Only look at first ~1000 characters for DOI (usually paper's own DOI is at top)
+                top_of_page = first_page[:1000]
+                doi_match = re.search(r'10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+', top_of_page)
                 if doi_match:
-                    return f"DOI:{doi_match.group(0)}"
+                    doi = doi_match.group(0)
+                    # Filter out common false positives (journal DOIs, review article DOIs that aren't this paper)
+                    # Skip if DOI looks like a journal-level DOI (too short or generic patterns)
+                    if len(doi) > 20 and not any(x in doi.lower() for x in ['issn', 'journal', '/j.', 'collection']):
+                        return f"DOI:{doi}"
                     
                 lines = first_page.split('\n')
                 # Take first 2-3 non-empty lines that aren't junk

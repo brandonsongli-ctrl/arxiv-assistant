@@ -166,6 +166,57 @@ if st.sidebar.button("🔄 Enrich All Papers"):
         
         if results['failed'] > 0:
             st.sidebar.warning(f"⚠️ {results['failed']} papers could not be matched.")
+        
+        time.sleep(1)
+        st.rerun()
+
+# Database Management Section
+st.sidebar.markdown("---")
+with st.sidebar.expander("🗑️ Manage Database"):
+    st.caption("Fix metadata errors or delete unwanted papers.")
+    
+    # Get all current titles
+    all_papers_dict = ingest.get_all_papers()
+    all_titles = sorted([p['title'] for p in all_papers_dict])
+    
+    if not all_titles:
+        st.info("Database is empty.")
+    else:
+        paper_to_delete = st.selectbox("Select paper to manage:", ["-- Select --"] + all_titles)
+        
+        if paper_to_delete != "-- Select --":
+            col_manage_1, col_manage_2 = st.columns(2)
+            
+            with col_manage_1:
+                if st.button("✏️ Fix Metadata"):
+                    # Find the full paper object
+                    target_paper = next((p for p in all_papers_dict if p['title'] == paper_to_delete), None)
+                    if target_paper:
+                        with st.spinner("Re-analyzing paper..."):
+                            # Force re-enrichment
+                            new_title, success, msg = enrich.enrich_single_paper(target_paper)
+                            if success:
+                                st.success(f"Fixed! New title: {new_title}")
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.warning(f"Could not improve metadata: {msg}")
+            
+            with col_manage_2:
+                if st.button("❌ Delete"):
+                    if database.delete_paper_by_title(paper_to_delete):
+                        st.success("Deleted!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Failed.")
+        
+        st.markdown("---")
+        if st.button("⚠️ RESET DATABASE (Danger)"):
+            database.drop_tables()
+            st.success("Database wiped clean!")
+            time.sleep(1)
+            st.rerun()
 
 # Main Tabs
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([

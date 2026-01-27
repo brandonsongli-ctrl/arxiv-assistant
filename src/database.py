@@ -240,6 +240,28 @@ def update_paper_metadata_by_title(title: str, new_metadata: Dict) -> int:
     
     return len(ids_to_update)
 
+def delete_paper_by_title(title: str) -> bool:
+    """Delete a paper and all its chunks by title."""
+    collection = get_collection()
+    
+    # Check if exists first
+    result = collection.get(
+        where={"title": title},
+        include=["metadatas"]
+    )
+    
+    if not result or not result['ids']:
+        return False
+        
+    try:
+        collection.delete(
+            where={"title": title}
+        )
+        return True
+    except Exception as e:
+        print(f"Error deleting paper {title}: {e}")
+        return False
+
 # ============== Vector Search Operations ==============
 
 def query_similar(query_text: str, n_results: int = 5) -> Dict:
