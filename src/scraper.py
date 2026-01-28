@@ -191,19 +191,26 @@ def resolve_paper_metadata(query: str) -> Dict:
     import requests
     import time
     
+    # Helper to check similarity against Title + Authors to support queries like "Title AuthorName"
+    def check_sim(query, result):
+        if not result.get("found"): return False
+        # Compare against Title + Authors
+        candidate_text = result.get("title", "") + " " + " ".join(result.get("authors", []))
+        return _is_title_similar(query, candidate_text)
+
     # Try Semantic Scholar first
     result = _try_semantic_scholar(query)
-    if result.get("found") and _is_title_similar(query, result.get("title", "")):
+    if check_sim(query, result):
         return result
     
     # Fallback to OpenAlex (no rate limit, very reliable)
     result = _try_openalex(query)
-    if result.get("found") and _is_title_similar(query, result.get("title", "")):
+    if check_sim(query, result):
         return result
         
     # Fallback to CrossRef
     result = _try_crossref(query)
-    if result.get("found") and _is_title_similar(query, result.get("title", "")):
+    if check_sim(query, result):
         return result
         
     return {"found": False}
