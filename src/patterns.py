@@ -500,6 +500,11 @@ def _extract_structural_patterns(documents: List[str], metadatas: List[Dict]) ->
                     if idx >= 2:
                         # Capture trigram ending in "that" (e.g., "we show that")
                         trigram = f"{tokens[idx-2]} {tokens[idx-1]} that"
+                        
+                        # Filter non-ASCII (math symbols like 𝒒𝒒)
+                        if not trigram.isascii():
+                            continue
+                            
                         # Filter junk: avoid if contains numbers (e.g. "table 3 that") or stops
                         if not re.match(r'.*\d.*', trigram) and not any(jw in trigram for jw in junk_keywords):
                             discovered_ngrams[trigram]["count"] += 1
@@ -513,6 +518,10 @@ def _extract_structural_patterns(documents: List[str], metadatas: List[Dict]) ->
             if len(tokens) >= 3:
                 starter_tokens = tokens[:3]
                 starter = " ".join(starter_tokens)
+                
+                # Filter 0: Check for non-ASCII math symbols (e.g. 𝒒𝒒)
+                if not starter.isascii():
+                    continue
                 
                 # Filter 1: Check for initials (single letters other than 'a' or 'i')
                 # Catches "vincent p crawford", "j r tolkien"
