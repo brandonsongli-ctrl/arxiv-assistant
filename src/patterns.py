@@ -511,8 +511,31 @@ def _extract_structural_patterns(documents: List[str], metadatas: List[Dict]) ->
             
             # Strategy B: Sentence Starters (First 3 words)
             if len(tokens) >= 3:
-                starter = f"{tokens[0]} {tokens[1]} {tokens[2]}"
-                # Common stop words to avoid as purely "the of and"
+                starter_tokens = tokens[:3]
+                starter = " ".join(starter_tokens)
+                
+                # Filter 1: Check for initials (single letters other than 'a' or 'i')
+                # Catches "vincent p crawford", "j r tolkien"
+                if any(len(t) == 1 and t not in ['a', 'i'] for t in starter_tokens):
+                    continue
+                    
+                # Filter 2: Heuristic for Names/Titles vs Sentences
+                # A valid sentence starter almost always contains a function word or common academic verb/noun
+                # "Crawford Vincent P" -> No function words. "Strategic Thinking Vincent" -> No function words.
+                # "We show that" -> 'we', 'that'. "In this paper" -> 'in', 'this'.
+                required_vocab = {
+                    'the', 'in', 'on', 'at', 'we', 'this', 'it', 'there', 'to', 'of', 'and', 'for', 'as', 'by', 'an', 'a',
+                    'result', 'results', 'figure', 'table', 'section', 'proof', 'lemma', 'theorem', 'proposition',
+                    'if', 'when', 'given', 'note', 'recall', 'consider', 'suppose', 'let', 'define', 'assume',
+                    'here', 'first', 'second', 'finally', 'moreover', 'however', 'furthermore', 'therefore',
+                    'thus', 'hence', 'clearly', 'intuitively', 'interestingly', 'similarly',
+                    'our', 'my', 'these', 'those', 'such', 'all', 'some', 'any', 'each', 'every'
+                }
+                
+                # If NO word in the starter is in our required vocab, assume it's a proper noun list or junk
+                if not any(t in required_vocab for t in starter_tokens):
+                    continue
+
                 if starter not in ["in this paper", "the rest of"] and not any(jw in starter for jw in junk_keywords): 
                     discovered_ngrams[starter]["count"] += 1
                     if len(discovered_ngrams[starter]["examples"]) < 5:
