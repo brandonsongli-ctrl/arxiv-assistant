@@ -11,9 +11,11 @@ from typing import List, Dict, Optional, Tuple, Any
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+_embed_cache: Dict[str, List[float]] = {}
+
 # Constants
-DB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "chroma_db")
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+DB_DIR = os.getenv("ARXIV_ASSISTANT_DB_DIR", os.path.expanduser("~/.arxiv_assistant/chroma_db"))
+EMBEDDING_MODEL = os.getenv("ARXIV_ASSISTANT_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
 # Lazy loaded singletons
 _client = None
@@ -32,7 +34,7 @@ def get_client():
     global _client
     if _client is None:
         if not os.path.exists(DB_DIR):
-            os.makedirs(DB_DIR)
+            os.makedirs(DB_DIR, exist_ok=True)
         _client = chromadb.PersistentClient(path=DB_DIR)
     return _client
 
@@ -190,9 +192,18 @@ def get_all_papers() -> List[Dict]:
                     'published': meta.get('published', 'Unknown'),
                     'doi': meta.get('doi', ''),
                     'entry_id': meta.get('entry_id', ''),
-                    'chunk_count': 0
+                    'chunk_count': 0,
+                    'source': meta.get('source', 'Unknown'),
+                    'canonical_id': meta.get('canonical_id', ''),
+                    'arxiv_id': meta.get('arxiv_id', ''),
+                    'openalex_id': meta.get('openalex_id', ''),
+                    'summary': meta.get('summary', '')
                 }
             papers[title]['chunk_count'] += 1
+            
+            # Prefer a non-empty summary if available
+            if not papers[title].get('summary') and meta.get('summary'):
+                papers[title]['summary'] = meta.get('summary')
             
     return list(papers.values())
 
@@ -205,7 +216,36 @@ def get_chunk_count() -> int:
 
 def get_all_chunks() -> Dict:
     collection = get_collection()
-    return collection.get(include=["documents", "metadatas"])
+    result = collection.get(include=["documents", "metadatas"])
+    return {
+        "ids": result.get("ids", []),
+        "documents": result.get("documents", []),
+        "metadatas": result.get("metadatas", []),
+    }
+
+
+def has_paper_by_metadata(field: str, value: str) -> bool:
+    """Check if any chunks exist with a given metadata field value."""
+    if not field or not value:
+        return False
+    collection = get_collection()
+    try:
+        result = collection.get(where={field: value}, include=["ids"])
+        return bool(result and result.get("ids"))
+    except Exception:
+        return False
+
+
+def get_chunks_by_title(title: str) -> Dict:
+    """Get all chunks for a given paper title."""
+    collection = get_collection()
+    # Note: ChromaDB `include` does not accept "ids" (ids are returned by default)
+    result = collection.get(where={"title": title}, include=["documents", "metadatas"])
+    return {
+        "ids": result.get("ids", []),
+        "documents": result.get("documents", []),
+        "metadatas": result.get("metadatas", []),
+    }
 
 def update_paper_metadata_by_title(title: str, new_metadata: Dict) -> int:
     """Update metadata for all chunks of a paper."""
@@ -267,8 +307,12 @@ def delete_paper_by_title(title: str) -> bool:
 def query_similar(query_text: str, n_results: int = 5) -> Dict:
     collection = get_collection()
     model = get_embedding_model()
-    
-    query_embedding = model.encode(query_text).tolist()
+    # Simple in-memory embedding cache for repeated queries
+    if query_text in _embed_cache:
+        query_embedding = _embed_cache[query_text]
+    else:
+        query_embedding = model.encode(query_text).tolist()
+        _embed_cache[query_text] = query_embedding
     
     results = collection.query(
         query_embeddings=[query_embedding],
@@ -280,11 +324,26 @@ def query_similar(query_text: str, n_results: int = 5) -> Dict:
 def get_all_embeddings() -> Tuple[List[str], List[np.ndarray], List[Dict]]:
     """Get all embeddings for clustering."""
     collection = get_collection()
-    result = collection.get(include=["embeddings", "metadatas"])
-    
-    titles = [m.get('title', 'Unknown') for m in result['metadatas']]
-    embeddings = [np.array(e) for e in result['embeddings']]
-    return titles, embeddings, result['metadatas']
+    try:
+        result = collection.get(include=["embeddings", "metadatas"])
+        titles = [m.get('title', 'Unknown') for m in result['metadatas']]
+        embeddings = [np.array(e) for e in result['embeddings']]
+        return titles, embeddings, result['metadatas']
+    except Exception as e:
+        # Fallback: recompute embeddings from documents if stored embeddings are unavailable/corrupt
+        try:
+            print(f"Warning: failed to fetch stored embeddings, recomputing. Error: {e}")
+            result = collection.get(include=["documents", "metadatas"])
+            docs = result.get("documents", [])
+            titles = [m.get('title', 'Unknown') for m in result.get('metadatas', [])]
+            if not docs:
+                return [], [], []
+            model = get_embedding_model()
+            embeddings = [np.array(e) for e in model.encode(docs).tolist()]
+            return titles, embeddings, result.get('metadatas', [])
+        except Exception as e2:
+            print(f"Error recomputing embeddings: {e2}")
+            return [], [], []
 
 def get_paper_embeddings_aggregated() -> Tuple[List[str], np.ndarray]:
     """Average embedding per paper."""

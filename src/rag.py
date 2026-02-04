@@ -1,6 +1,6 @@
 import os
 from openai import OpenAI
-from src import database
+from src import database, retrieval
 
 # LLM Configuration
 # Priority: OPENAI_API_KEY (cloud) -> OLLAMA_HOST (local)
@@ -29,12 +29,21 @@ else:
         LLM_AVAILABLE = False
         LLM_BACKEND = "none"
 
+
+def llm_status() -> dict:
+    return {
+        "available": LLM_AVAILABLE,
+        "backend": LLM_BACKEND,
+        "model": LLM_MODEL,
+        "ollama_host": OLLAMA_HOST
+    }
+
 def query_db(query_text: str, n_results: int = 5):
     """
     Search the vector database for relevant chunks.
     Wraps database.query_similar to maintain API compatibility.
     """
-    return database.query_similar(query_text, n_results=n_results)
+    return retrieval.query(query_text, n_results=n_results)
 
 def format_context(results) -> str:
     """
@@ -76,16 +85,42 @@ def rewrite_sentence(sentence: str, context: str = "", style: str = "academic") 
     """
     Rewrite a sentence to be more academic, using retrieved context as style reference if available.
     """
-    prompt = f"Rewrite the following sentence to be more academic and formal suitable for a paper on Microeconomic Theory.\n\nSentence: {sentence}\n"
+    style = (style or "academic").strip().lower()
+    style_hint = {
+        "journal": "journal article style (formal, precise, concise, third-person)",
+        "working paper": "working paper style (clear, explanatory, slightly longer sentences)",
+        "grant": "grant proposal style (persuasive, action-oriented, highlights impact)"
+    }.get(style, "academic style (formal, precise)")
+    
+    prompt = f"Rewrite the following sentence in {style_hint}, suitable for a paper in Microeconomic Theory.\n\nSentence: {sentence}\n"
     if context:
         prompt += f"\nReference style/content from these papers:\n{context}"
     
     return ask_llm(prompt)
 
-def generate_ideas(topic: str, context: str) -> str:
+def generate_ideas(topic: str, context: str, structured: bool = False) -> str:
     """
     Generate research ideas based on the topic and retrieved literature.
     """
+    structure_rules = ""
+    if structured:
+        structure_rules = """
+Output format (Markdown):
+## Research Gaps
+1. Idea: ...
+2. Idea: ...
+3. Idea: ...
+
+## Proposed Directions
+1. Idea: ... | Motivation: ... | Method: ... | Contribution: ...
+2. Idea: ... | Motivation: ... | Method: ... | Contribution: ...
+3. Idea: ... | Motivation: ... | Method: ... | Contribution: ...
+
+## Evidence Needed
+- ...
+- ...
+"""
+    
     prompt = f"""You are a research assistant specializing in Microeconomic Theory.
 
 The user is interested in the topic: "{topic}"
@@ -98,6 +133,7 @@ IMPORTANT RULES:
 2. If the excerpts do not seem closely related to the user's topic, explicitly say so and suggest what types of papers might be needed.
 3. Focus on SPECIFIC technical gaps, not generic suggestions like "study more empirically."
 4. Reference the papers/excerpts when proposing ideas.
+{structure_rules}
 
 === RETRIEVED LITERATURE EXCERPTS ===
 {context}

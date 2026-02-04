@@ -16,13 +16,18 @@ services:
       - DB_PASSWORD=postgres
       # Host for Ollama running on the host machine
       - OLLAMA_HOST=http://host.docker.internal:11434/v1
+      # Persist Chroma + search history inside mounted volumes
+      - ARXIV_ASSISTANT_DB_DIR=/app/data/chroma_db
+      - ARXIV_ASSISTANT_HISTORY_PATH=/app/data/history/search_history.json
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       # Mount data directory to persist PDFs if downloaded
       - ./data/pdfs:/app/data/pdfs
-      # Mount the correct ChromaDB source for migration
+      # Persist ChromaDB
       - ./data/chroma_db_restored:/app/data/chroma_db
+      # Persist search history
+      - ./data/history:/app/data/history
 
   # PostgreSQL Database with pgvector
   db:

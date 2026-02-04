@@ -301,7 +301,7 @@ def build_pattern_library(data_dir: str = None) -> Dict:
     if not result.get('documents'):
         return {"patterns": {}, "total_papers": 0}
     
-    pattern_library = defaultdict(lambda: {"count": 0, "examples": [], "category": ""})
+    pattern_library = defaultdict(lambda: {"count": 0, "examples": [], "category": "", "variants": {}})
     
     # Compile all patterns for speed
     compiled_patterns = []
@@ -334,6 +334,22 @@ def build_pattern_library(data_dir: str = None) -> Dict:
                         example = {'sentence': sentence[:200], 'source': source}
                         if example not in pattern_library[pattern_str]['examples']:
                             pattern_library[pattern_str]['examples'].append(example)
+
+                    # Variant-level tracking so alternations like (generalizes|extends|...) have
+                    # separate counts and examples for each matched wording.
+                    variant_text = (match.group(0) or "").strip()
+                    variant_text = re.sub(r"\\s+", " ", variant_text)
+                    # Only keep short-ish variants; skip variable/long matches to avoid exploding keys.
+                    if 1 <= len(variant_text) <= 80:
+                        vkey = variant_text.lower()
+                        variants = pattern_library[pattern_str].setdefault("variants", {})
+                        v = variants.setdefault(vkey, {"count": 0, "examples": []})
+                        v["count"] += 1
+                        if len(v["examples"]) < 5:
+                            source = result['metadatas'][i].get('title', 'Unknown') if result.get('metadatas') else 'Unknown'
+                            v_example = {"sentence": sentence[:200], "source": source}
+                            if v_example not in v["examples"]:
+                                v["examples"].append(v_example)
         
         # Progress every 2000 chunks
         if (i + 1) % 2000 == 0:
@@ -621,10 +637,21 @@ def search_patterns(query: str, library: Dict = None) -> List[Tuple[str, Dict]]:
     results = []
     
     for pattern_text, pattern_data in library.get('patterns', {}).items():
-        if query_lower in pattern_text.lower():
-            results.append((pattern_text, pattern_data))
-        elif pattern_data.get('category', '').lower() == query_lower:
-            results.append((pattern_text, pattern_data))
+        category = pattern_data.get('category', 'Other')
+        variants = pattern_data.get('variants') or {}
+        
+        # If we have variant stats, search on variants so synonyms are separate.
+        if variants:
+            for v_text, v_data in variants.items():
+                if query_lower in str(v_text).lower() or str(category).lower() == query_lower:
+                    results.append((v_text, {
+                        "count": v_data.get("count", 0),
+                        "examples": v_data.get("examples", []),
+                        "category": category
+                    }))
+        else:
+            if query_lower in pattern_text.lower() or str(category).lower() == query_lower:
+                results.append((pattern_text, pattern_data))
     
     # Sort by frequency
     results.sort(key=lambda x: x[1]['count'], reverse=True)
@@ -645,11 +672,21 @@ def get_patterns_by_category(library: Dict = None) -> Dict[str, List]:
     
     for pattern_text, pattern_data in library.get('patterns', {}).items():
         category = pattern_data.get('category', 'Other')
-        categories[category].append({
-            'text': pattern_text,
-            'count': pattern_data['count'],
-            'examples': pattern_data['examples']
-        })
+        variants = pattern_data.get('variants') or {}
+        
+        if variants:
+            for v_text, v_data in variants.items():
+                categories[category].append({
+                    'text': v_text,
+                    'count': v_data.get('count', 0),
+                    'examples': v_data.get('examples', [])
+                })
+        else:
+            categories[category].append({
+                'text': pattern_text,
+                'count': pattern_data['count'],
+                'examples': pattern_data['examples']
+            })
     
     # Sort patterns within each category by frequency
     for category in categories:

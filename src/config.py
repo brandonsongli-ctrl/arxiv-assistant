@@ -14,12 +14,12 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 
 # Embedding model settings
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+EMBEDDING_MODEL = os.getenv("ARXIV_ASSISTANT_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 EMBEDDING_DIMENSION = 384  # Dimension for all-MiniLM-L6-v2
 
 # Chunk settings
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = int(os.getenv("ARXIV_ASSISTANT_CHUNK_SIZE", "1000"))
+CHUNK_OVERLAP = int(os.getenv("ARXIV_ASSISTANT_CHUNK_OVERLAP", "200"))
 
 
 def get_connection_string() -> str:

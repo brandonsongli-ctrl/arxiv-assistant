@@ -5,6 +5,7 @@ Generates comparative literature reviews from selected papers using the local LL
 """
 
 from typing import List, Dict
+import re
 from .ingest import get_all_papers
 from .rag import ask_llm
 
@@ -18,6 +19,29 @@ def get_papers_by_title(titles: List[str]) -> List[Dict]:
     all_papers = get_all_papers()
     target_papers = [p for p in all_papers if p['title'] in titles]
     return target_papers
+
+
+def _format_references(papers: List[Dict]) -> str:
+    if not papers:
+        return ""
+    lines = []
+    for paper in papers:
+        authors = paper.get('authors', 'Unknown')
+        if isinstance(authors, list):
+            author_text = ", ".join(authors)
+        else:
+            author_text = str(authors)
+        year = "Unknown"
+        published = paper.get('published', 'Unknown')
+        if published and published != 'Unknown':
+            match = re.search(r'(\d{4})', str(published))
+            if match:
+                year = match.group(1)
+        title = paper.get('title', 'Unknown Title')
+        doi = paper.get('doi', '')
+        doi_text = f" DOI: {doi}." if doi and doi not in ['Unknown', 'None'] else ""
+        lines.append(f"- {author_text} ({year}). {title}.{doi_text}")
+    return "\n".join(lines)
 
 def generate_literature_review(titles: List[str]) -> str:
     """
@@ -57,4 +81,21 @@ Structure the review as follows:
 Write in a formal, academic tone.
 """
 
-    return ask_llm(prompt)
+    review_text = ask_llm(prompt)
+    refs = _format_references(papers)
+    if refs:
+        review_text += "\n\n---\n\n## References\n" + refs
+    return review_text
+
+def generate_deep_literature_review(titles: List[str] = None, topic: str = None) -> str:
+    """
+    Generate a deep agentic literature review.
+    """
+    from .agents import run_agentic_review
+    review_text = run_agentic_review(topic, titles)
+    if titles:
+        papers = get_papers_by_title(titles)
+        refs = _format_references(papers)
+        if refs:
+            review_text += "\n\n---\n\n## References\n" + refs
+    return review_text

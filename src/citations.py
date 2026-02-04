@@ -5,7 +5,7 @@ Finds relevant papers to cite based on semantic similarity to user's text.
 """
 
 from typing import List, Dict, Tuple
-from src import database
+from src import retrieval
 from src.bibtex import generate_bibtex_entry
 
 
@@ -24,7 +24,7 @@ def recommend_citations(text: str, n_results: int = 5) -> List[Dict]:
         return []
     
     # Query Database for similar chunks
-    results = database.query_similar(text, n_results=n_results * 3)
+    results = retrieval.query(text, n_results=n_results * 3)
     
     if not results.get('metadatas') or not results['metadatas'][0]:
         return []
@@ -97,7 +97,7 @@ def get_citation_context(text: str, n_results: int = 3) -> Tuple[List[Dict], str
         Tuple of (paper list, context string with excerpts)
     """
     # Query for chunks with documents
-    results = database.query_similar(text, n_results=n_results * 2)
+    results = retrieval.query(text, n_results=n_results * 2)
     
     if not results.get('documents') or not results['documents'][0]:
         return [], "No relevant content found."
