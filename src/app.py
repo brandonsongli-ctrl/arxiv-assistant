@@ -933,7 +933,11 @@ with tab1:
             if years:
                 min_year = min(years)
                 max_year = max(years)
-                year_range = st.slider("Year Range", min_value=min_year, max_value=max_year, value=(min_year, max_year))
+                if min_year == max_year:
+                    st.caption(f"Year Filter: {min_year}")
+                    year_range = (min_year, max_year)
+                else:
+                    year_range = st.slider("Year Range", min_value=min_year, max_value=max_year, value=(min_year, max_year))
             else:
                 year_range = None
                 st.caption("Year Range: N/A")

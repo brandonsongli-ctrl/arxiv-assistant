@@ -619,47 +619,62 @@ def _is_title_similar(query: str, title: str, threshold: float = 0.2) -> bool:
 
 
 def _try_semantic_scholar(query: str) -> Dict:
-    """Try Semantic Scholar API."""
+    """Try Semantic Scholar API with rate-limit handling."""
     import requests
+    import time
     
-    try:
-        if query.strip().upper().startswith("DOI:"):
-            doi = query.strip()[4:].strip()
-            url = f"https://api.semanticscholar.org/graph/v1/paper/{doi}"
-            params = {"fields": "title,authors,externalIds,year,publicationDate,abstract"}
-        else:
-            url = "https://api.semanticscholar.org/graph/v1/paper/search"
-            params = {"query": query, "limit": 1, "fields": "title,authors,externalIds,year,publicationDate,abstract"}
-        
-        response = requests.get(url, params=params, timeout=5)
-        
-        if response.status_code == 429:
-            print("Semantic Scholar rate limited, trying fallback...")
+    max_retries = 3
+    base_wait = 2
+    
+    for attempt in range(max_retries + 1):
+        try:
+            if query.strip().upper().startswith("DOI:"):
+                doi = query.strip()[4:].strip()
+                url = f"https://api.semanticscholar.org/graph/v1/paper/{doi}"
+                params = {"fields": "title,authors,externalIds,year,publicationDate,abstract"}
+            else:
+                url = "https://api.semanticscholar.org/graph/v1/paper/search"
+                params = {"query": query, "limit": 1, "fields": "title,authors,externalIds,year,publicationDate,abstract"}
+            
+            response = requests.get(url, params=params, timeout=5)
+            
+            if response.status_code == 429:
+                wait_time = base_wait * (2 ** attempt)
+                print(f"Semantic Scholar rate limited, sleeping {wait_time}s... (attempt {attempt+1}/{max_retries+1})")
+                time.sleep(wait_time)
+                continue  # Retry
+                
+            if response.status_code == 200:
+                data = response.json()
+                if 'data' in data:
+                    if not data['data']:
+                        return {"found": False}
+                    item = data['data'][0]
+                else:
+                    item = data
+                    
+                doi = item.get('externalIds', {}).get('DOI') if item.get('externalIds') else None
+                authors_list = [a.get('name') for a in item.get('authors', [])] if item.get('authors') else ["Unknown"]
+                
+                return {
+                    "title": item.get('title'),
+                    "authors": authors_list,
+                    "published": str(item.get('publicationDate') or item.get('year')),
+                    "doi": doi,
+                    "summary": item.get('abstract'),
+                    "found": True,
+                    "source": "semantic_scholar"
+                }
+            
+            # Other error codes - don't retry
             return {"found": False}
             
-        if response.status_code == 200:
-            data = response.json()
-            if 'data' in data:
-                if not data['data']:
-                    return {"found": False}
-                item = data['data'][0]
-            else:
-                item = data
-                
-            doi = item.get('externalIds', {}).get('DOI') if item.get('externalIds') else None
-            authors_list = [a.get('name') for a in item.get('authors', [])] if item.get('authors') else ["Unknown"]
+        except Exception as e:
+            if attempt < max_retries:
+                time.sleep(1)
+                continue
+            print(f"Semantic Scholar error: {e}")
             
-            return {
-                "title": item.get('title'),
-                "authors": authors_list,
-                "published": str(item.get('publicationDate') or item.get('year')),
-                "doi": doi,
-                "summary": item.get('abstract'),
-                "found": True,
-                "source": "semantic_scholar"
-            }
-    except Exception as e:
-        print(f"Semantic Scholar error: {e}")
     return {"found": False}
 
 
