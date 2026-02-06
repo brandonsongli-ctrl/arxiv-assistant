@@ -684,8 +684,7 @@ def graph_to_plotly(G: nx.DiGraph, paper_info: Dict) -> go.Figure:
             colorbar=dict(
                 thickness=15,
                 title='Node Score',
-                xanchor='left',
-                titleside='right'
+                xanchor='left'
             ),
             line_width=2
         )
