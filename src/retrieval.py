@@ -75,6 +75,61 @@ _bm25_count: int = -1
 _reranker = None
 
 
+def _looks_like_identifier(text: str) -> bool:
+    t = str(text or "").strip().lower()
+    if re.match(r"^\d{4}\.\d{4,5}(v\d+)?$", t):
+        return True
+    if t.startswith("10.") and "/" in t:
+        return True
+    if "arxiv:" in t or "doi:" in t:
+        return True
+    return False
+
+
+def auto_tune(query_text: str, n_results: int = 5) -> Dict:
+    """
+    Choose retrieval mode/top_k based on query intent.
+    """
+    q = str(query_text or "").strip()
+    q_lower = q.lower()
+    tokens = _tokenize(q)
+    token_count = len(tokens)
+
+    mode = "hybrid"
+    candidate_multiplier = _get_candidate_multiplier()
+    tuned_n_results = n_results
+    reason = []
+
+    if _looks_like_identifier(q):
+        mode = "bm25"
+        tuned_n_results = max(3, min(8, n_results))
+        reason.append("identifier_query")
+    elif token_count <= 2:
+        mode = "bm25"
+        tuned_n_results = max(5, n_results)
+        reason.append("short_keyword_query")
+    elif ("?" in q) or any(x in q_lower for x in ["why", "how", "compare", "difference", "tradeoff"]):
+        mode = "hybrid"
+        candidate_multiplier = max(candidate_multiplier, 4)
+        tuned_n_results = max(n_results, 8)
+        reason.append("question_or_reasoning_query")
+    elif token_count >= 12:
+        mode = "vector"
+        tuned_n_results = max(n_results, 8)
+        reason.append("long_semantic_query")
+    else:
+        mode = "hybrid"
+        tuned_n_results = max(n_results, 6)
+        reason.append("default_hybrid")
+
+    return {
+        "mode": mode,
+        "n_results": tuned_n_results,
+        "candidate_multiplier": candidate_multiplier,
+        "reason": ",".join(reason) if reason else "default",
+    }
+
+
 def _tokenize(text: str) -> List[str]:
     return re.findall(r"[A-Za-z0-9]+", text.lower())
 
@@ -223,6 +278,13 @@ def query(query_text: str, n_results: int = 5, mode: str = None) -> Dict:
         mode = _get_mode()
         
     mode = mode.lower()
+
+    local_candidate_multiplier = _get_candidate_multiplier()
+    if mode == "auto":
+        tuned = auto_tune(query_text, n_results=n_results)
+        mode = tuned.get("mode", "hybrid")
+        n_results = int(tuned.get("n_results", n_results))
+        local_candidate_multiplier = int(tuned.get("candidate_multiplier", local_candidate_multiplier))
     
     if mode == "vector":
         return database.query_similar(query_text, n_results=n_results)
@@ -237,7 +299,7 @@ def query(query_text: str, n_results: int = 5, mode: str = None) -> Dict:
         return _format_results(hits)
     
     # Hybrid fallback
-    candidate_k = max(n_results * _get_candidate_multiplier(), n_results)
+    candidate_k = max(n_results * local_candidate_multiplier, n_results)
     vector_hits = _vector_hits(query_text, n_results=candidate_k)
     bm25_hits = _bm25_hits(query_text, n_results=candidate_k)
     

@@ -178,6 +178,7 @@ def search_arxiv(query: str, max_results: int = 10, sort_by: str = "relevance",
 
     output = []
     for result in results:
+        venue = getattr(result, "journal_ref", None)
         output.append({
             "title": result.title,
             "authors": [a.name for a in result.authors],
@@ -187,7 +188,8 @@ def search_arxiv(query: str, max_results: int = 10, sort_by: str = "relevance",
             "published": str(result.published),
             "obj": result,
             "source": "arxiv",
-            "doi": result.doi if hasattr(result, "doi") else None
+            "doi": result.doi if hasattr(result, "doi") else None,
+            "venue": venue
         })
     return output
 
@@ -224,7 +226,7 @@ def search_semantic_scholar(query: str, max_results: int = 10) -> List[Dict]:
     params = {
         "query": query,
         "limit": max_results,
-        "fields": "title,authors,abstract,url,openAccessPdf,publicationDate,year,externalIds"
+        "fields": "title,authors,abstract,url,openAccessPdf,publicationDate,year,externalIds,venue,publicationVenue"
     }
     
     try:
@@ -283,6 +285,11 @@ def search_semantic_scholar(query: str, max_results: int = 10) -> List[Dict]:
                 pdf_url = item.get('openAccessPdf').get('url')
             
             authors_list = [a.get('name') for a in item.get('authors', [])] if item.get('authors') else ["Unknown"]
+            venue = None
+            if item.get('publicationVenue'):
+                venue = item.get('publicationVenue', {}).get('name') or item.get('publicationVenue', {}).get('display_name')
+            if not venue:
+                venue = item.get('venue')
             
             output.append({
                 "title": item.get('title', 'No Title'),
@@ -293,7 +300,8 @@ def search_semantic_scholar(query: str, max_results: int = 10) -> List[Dict]:
                 "published": str(item.get('publicationDate')) if item.get('publicationDate') else str(item.get('year')),
                 "source": "semanticscholar",
                 "obj": None,
-                "doi": item.get('externalIds', {}).get('DOI') if item.get('externalIds') else None
+                "doi": item.get('externalIds', {}).get('DOI') if item.get('externalIds') else None,
+                "venue": venue
             })
         return output
         
@@ -382,7 +390,7 @@ def _search_openalex_simple(query: str, max_results: int, source_name: str, sour
     params = {
         "search": query,
         "per_page": max_results,
-        "select": "title,authorships,publication_year,publication_date,doi,abstract_inverted_index,best_oa_location,primary_location"
+        "select": "id,title,authorships,publication_year,publication_date,doi,abstract_inverted_index,best_oa_location,primary_location,host_venue"
     }
     
     if source_id:
@@ -412,6 +420,16 @@ def _search_openalex_simple(query: str, max_results: int, source_name: str, sour
 
                 summary = abstract if abstract else f"Source: {source_name}. DOI: {item.get('doi') or 'N/A'}"
 
+                venue = None
+                host_venue = item.get("host_venue") or {}
+                if host_venue.get("display_name"):
+                    venue = host_venue.get("display_name")
+                if not venue:
+                    primary_loc = item.get("primary_location") or {}
+                    source_obj = primary_loc.get("source") or {}
+                    if source_obj.get("display_name"):
+                        venue = source_obj.get("display_name")
+
                 output.append({
                     "title": item.get('title', 'No Title'),
                     "authors": authors if authors else ["Unknown"],
@@ -421,7 +439,8 @@ def _search_openalex_simple(query: str, max_results: int, source_name: str, sour
                     "published": str(item.get('publication_year')),
                     "source": source_name.lower(),
                     "obj": None,
-                    "doi": item.get('doi', '').replace('https://doi.org/', '') if item.get('doi') else None
+                    "doi": item.get('doi', '').replace('https://doi.org/', '') if item.get('doi') else None,
+                    "venue": venue
                 })
             return output
     except Exception as e:
@@ -498,7 +517,8 @@ def search_google_scholar(query: str, max_results: int = 5) -> List[Dict]:
                 "entry_id": item.get('author_id', ['unknown'])[0] if item.get('author_id') else f"gs_{count}",
                 "published": str(bib.get('pub_year', 'Unknown')),
                 "source": "google_scholar",
-                "obj": None
+                "obj": None,
+                "venue": bib.get("venue")
             })
             count += 1
             
@@ -631,10 +651,10 @@ def _try_semantic_scholar(query: str) -> Dict:
             if query.strip().upper().startswith("DOI:"):
                 doi = query.strip()[4:].strip()
                 url = f"https://api.semanticscholar.org/graph/v1/paper/{doi}"
-                params = {"fields": "title,authors,externalIds,year,publicationDate,abstract"}
+                params = {"fields": "title,authors,externalIds,year,publicationDate,abstract,venue,publicationVenue"}
             else:
                 url = "https://api.semanticscholar.org/graph/v1/paper/search"
-                params = {"query": query, "limit": 1, "fields": "title,authors,externalIds,year,publicationDate,abstract"}
+                params = {"query": query, "limit": 1, "fields": "title,authors,externalIds,year,publicationDate,abstract,venue,publicationVenue"}
             
             response = requests.get(url, params=params, timeout=5)
             
@@ -656,12 +676,19 @@ def _try_semantic_scholar(query: str) -> Dict:
                 doi = item.get('externalIds', {}).get('DOI') if item.get('externalIds') else None
                 authors_list = [a.get('name') for a in item.get('authors', [])] if item.get('authors') else ["Unknown"]
                 
+                venue = None
+                if item.get("publicationVenue"):
+                    venue = item.get("publicationVenue", {}).get("name") or item.get("publicationVenue", {}).get("display_name")
+                if not venue:
+                    venue = item.get("venue")
+
                 return {
                     "title": item.get('title'),
                     "authors": authors_list,
                     "published": str(item.get('publicationDate') or item.get('year')),
                     "doi": doi,
                     "summary": item.get('abstract'),
+                    "venue": venue,
                     "found": True,
                     "source": "semantic_scholar"
                 }

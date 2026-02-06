@@ -7,6 +7,7 @@ Handles all database operations for the Academic Literature Assistant using loca
 import chromadb
 from chromadb.config import Settings
 import os
+import re
 from typing import List, Dict, Optional, Tuple, Any
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -21,6 +22,47 @@ EMBEDDING_MODEL = os.getenv("ARXIV_ASSISTANT_EMBEDDING_MODEL", "all-MiniLM-L6-v2
 _client = None
 _collection = None
 _embedding_model = None
+
+
+def _parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text in {"1", "true", "yes", "y", "on"}
+
+
+def _parse_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+def _parse_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _parse_tags(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        raw = [str(v).strip() for v in value if str(v).strip()]
+    else:
+        raw = [t.strip() for t in re.split(r"[;,]", str(value)) if t.strip()]
+    seen = set()
+    tags = []
+    for tag in raw:
+        low = tag.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        tags.append(tag)
+    return tags
 
 def get_embedding_model():
     """Lazy load embedding model."""
@@ -186,6 +228,7 @@ def get_all_papers() -> List[Dict]:
         for meta in result['metadatas']:
             title = meta.get('title', 'Unknown')
             if title not in papers:
+                tags = _parse_tags(meta.get('tags', ''))
                 papers[title] = {
                     'title': title,
                     'authors': meta.get('authors', 'Unknown'),
@@ -197,13 +240,59 @@ def get_all_papers() -> List[Dict]:
                     'canonical_id': meta.get('canonical_id', ''),
                     'arxiv_id': meta.get('arxiv_id', ''),
                     'openalex_id': meta.get('openalex_id', ''),
-                    'summary': meta.get('summary', '')
+                    'summary': meta.get('summary', ''),
+                    'venue': meta.get('venue', ''),
+                    'tags': tags,
+                    'is_favorite': _parse_bool(meta.get('is_favorite')),
+                    'in_reading_list': _parse_bool(meta.get('in_reading_list')),
+                    'parse_pages': _parse_int(meta.get('parse_pages', 0)),
+                    'parse_ocr_pages': _parse_int(meta.get('parse_ocr_pages', 0)),
+                    'parse_extraction_mode': meta.get('parse_extraction_mode', 'embedded_only'),
+                    'parse_quality_score': _parse_float(meta.get('parse_quality_score', 0.0)),
+                    'parse_quality_label': meta.get('parse_quality_label', 'unknown'),
+                    'parse_table_lines': _parse_int(meta.get('parse_table_lines', 0)),
+                    'parse_formula_lines': _parse_int(meta.get('parse_formula_lines', 0)),
+                    'parse_figure_caption_lines': _parse_int(meta.get('parse_figure_caption_lines', 0))
                 }
             papers[title]['chunk_count'] += 1
             
             # Prefer a non-empty summary if available
             if not papers[title].get('summary') and meta.get('summary'):
                 papers[title]['summary'] = meta.get('summary')
+            if not papers[title].get('venue') and meta.get('venue'):
+                papers[title]['venue'] = meta.get('venue')
+            if not papers[title].get('is_favorite') and _parse_bool(meta.get('is_favorite')):
+                papers[title]['is_favorite'] = True
+            if not papers[title].get('in_reading_list') and _parse_bool(meta.get('in_reading_list')):
+                papers[title]['in_reading_list'] = True
+            if meta.get('tags'):
+                merged_tags = papers[title].get('tags', []) + _parse_tags(meta.get('tags'))
+                papers[title]['tags'] = _parse_tags(merged_tags)
+            papers[title]['parse_pages'] = max(
+                papers[title].get('parse_pages', 0),
+                _parse_int(meta.get('parse_pages', 0))
+            )
+            papers[title]['parse_ocr_pages'] = max(
+                papers[title].get('parse_ocr_pages', 0),
+                _parse_int(meta.get('parse_ocr_pages', 0))
+            )
+            papers[title]['parse_table_lines'] = max(
+                papers[title].get('parse_table_lines', 0),
+                _parse_int(meta.get('parse_table_lines', 0))
+            )
+            papers[title]['parse_formula_lines'] = max(
+                papers[title].get('parse_formula_lines', 0),
+                _parse_int(meta.get('parse_formula_lines', 0))
+            )
+            papers[title]['parse_figure_caption_lines'] = max(
+                papers[title].get('parse_figure_caption_lines', 0),
+                _parse_int(meta.get('parse_figure_caption_lines', 0))
+            )
+            score = _parse_float(meta.get('parse_quality_score', 0.0))
+            if score > papers[title].get('parse_quality_score', 0.0):
+                papers[title]['parse_quality_score'] = score
+                papers[title]['parse_quality_label'] = meta.get('parse_quality_label', papers[title].get('parse_quality_label', 'unknown'))
+                papers[title]['parse_extraction_mode'] = meta.get('parse_extraction_mode', papers[title].get('parse_extraction_mode', 'embedded_only'))
             
     return list(papers.values())
 
@@ -269,6 +358,12 @@ def update_paper_metadata_by_title(title: str, new_metadata: Dict) -> int:
         for k, v in new_metadata.items():
             if k == 'authors' and isinstance(v, list):
                 updated[k] = ", ".join(v)
+            elif k == 'tags':
+                updated[k] = ", ".join(_parse_tags(v))
+            elif k in {'is_favorite', 'in_reading_list'}:
+                updated[k] = bool(v)
+            elif v is None:
+                updated[k] = ""
             else:
                 updated[k] = v
         new_metadatas.append(updated)
@@ -301,6 +396,77 @@ def delete_paper_by_title(title: str) -> bool:
     except Exception as e:
         print(f"Error deleting paper {title}: {e}")
         return False
+
+
+def delete_paper_by_metadata(field: str, value: str) -> bool:
+    """Delete paper chunks by a specific metadata field value."""
+    if not field or value is None:
+        return False
+    collection = get_collection()
+    try:
+        result = collection.get(where={field: value}, include=["metadatas"])
+        if not result or not result.get("ids"):
+            return False
+        collection.delete(where={field: value})
+        return True
+    except Exception as e:
+        print(f"Error deleting by metadata {field}={value}: {e}")
+        return False
+
+
+def update_paper_metadata_by_field(field: str, value: str, new_metadata: Dict) -> int:
+    """Update metadata for chunks matched by a specific metadata field."""
+    if not field or value is None:
+        return 0
+
+    collection = get_collection()
+    try:
+        result = collection.get(where={field: value}, include=["metadatas"])
+    except Exception:
+        return 0
+
+    if not result or not result.get("ids"):
+        return 0
+
+    ids_to_update = result["ids"]
+    new_metadatas = []
+    for old_meta in result["metadatas"]:
+        updated = old_meta.copy()
+        for k, v in (new_metadata or {}).items():
+            if k == "authors" and isinstance(v, list):
+                updated[k] = ", ".join(v)
+            elif k == "tags":
+                updated[k] = ", ".join(_parse_tags(v))
+            elif k in {"is_favorite", "in_reading_list"}:
+                updated[k] = bool(v)
+            elif v is None:
+                updated[k] = ""
+            else:
+                updated[k] = v
+        new_metadatas.append(updated)
+
+    collection.update(ids=ids_to_update, metadatas=new_metadatas)
+    return len(ids_to_update)
+
+
+def reindex_chunks_by_title(title: str) -> int:
+    """
+    Recompute embeddings for all chunks of a paper title.
+    Useful after incremental maintenance operations.
+    """
+    if not title:
+        return 0
+    collection = get_collection()
+    result = collection.get(where={"title": title}, include=["documents"])
+    ids = result.get("ids", []) if result else []
+    docs = result.get("documents", []) if result else []
+    if not ids or not docs:
+        return 0
+
+    model = get_embedding_model()
+    embeddings = model.encode(docs).tolist()
+    collection.update(ids=ids, embeddings=embeddings)
+    return len(ids)
 
 # ============== Vector Search Operations ==============
 

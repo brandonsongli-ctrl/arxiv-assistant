@@ -8,7 +8,7 @@ from datetime import date, timedelta
 # Add project root to path so we can import src modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src import scraper, ingest, rag, retrieval
+from src import scraper, ingest, rag, retrieval, search_utils, task_queue, watchlist
 from src import bibtex, citations, patterns, clustering, database, dedupe, exports, summaries, history, diagnostics
 from src.metadata_utils import compute_canonical_id, normalize_doi, extract_arxiv_id, extract_openalex_id
 # review is imported lazily inside its tab to avoid circular import issues
@@ -42,6 +42,38 @@ def format_published(paper) -> str:
     if not paper:
         return "Unknown"
     return str(paper.get("published", "Unknown"))
+
+
+def parse_tags(tags_value) -> list:
+    if not tags_value:
+        return []
+    if isinstance(tags_value, list):
+        raw = [str(t).strip() for t in tags_value if str(t).strip()]
+    else:
+        raw = [t.strip() for t in re.split(r"[;,]", str(tags_value)) if t.strip()]
+    seen = set()
+    tags = []
+    for t in raw:
+        low = t.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        tags.append(t)
+    return tags
+
+
+def format_tags(tags_value) -> str:
+    tags = parse_tags(tags_value)
+    return ", ".join(tags)
+
+
+def coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text in {"1", "true", "yes", "y", "on"}
 
 
 def _split_top_level_alternation(text: str) -> list:
@@ -272,6 +304,9 @@ def download_paper_for_ingest(paper):
     
     return pdf_path, error
 
+
+queue_manager = task_queue.get_queue()
+
 # Sidebar: Manage Database
 with st.sidebar:
     st.header("Manage Database")
@@ -398,6 +433,9 @@ with st.sidebar:
             st.rerun()
             
     if 'search_results' in st.session_state:
+        use_bg_queue = st.checkbox("Use background queue for ingest", value=True, key="search_use_bg_queue")
+        auto_enrich_bg = st.checkbox("Background tasks run metadata enrichment", value=True, key="search_auto_enrich_bg")
+
         raw_count = st.session_state.get('search_results_raw_count', len(st.session_state['search_results']))
         if raw_count != len(st.session_state['search_results']):
             st.write(f"Found {len(st.session_state['search_results'])} unique papers, deduped from {raw_count} results:")
@@ -419,46 +457,60 @@ with st.sidebar:
                     selected_indices.append(i)
                 st.caption(f"Authors: {format_authors(paper.get('authors'))}")
                 st.caption(f"Published: {format_published(paper)}")
+                if paper.get("venue"):
+                    st.caption(f"Venue: {paper.get('venue')}")
                 st.write(paper.get('summary', 'No summary available.'))
                 if st.button(f"Download and Ingest {i}", key=f"btn_{i}"):
-                    with st.spinner("Downloading and ingesting..."):
-                        # Download
-                        pdf_path, error = download_paper_for_ingest(paper)
-                        if error:
-                            st.error(error)
-                        
-                        if pdf_path:
-                            st.success(f"Downloaded to {pdf_path}")
+                    if use_bg_queue:
+                        task_id = queue_manager.enqueue_ingest_from_paper(paper, run_enrichment=auto_enrich_bg)
+                        st.success(f"Queued as background task: {task_id[:8]}")
+                    else:
+                        with st.spinner("Downloading and ingesting..."):
+                            # Download
+                            pdf_path, error = download_paper_for_ingest(paper)
+                            if error:
+                                st.error(error)
                             
-                            # Ingest
-                            ingest.ingest_paper(pdf_path, paper)
-                            st.success("Added to Database!")
-                            st.cache_data.clear()
+                            if pdf_path:
+                                st.success(f"Downloaded to {pdf_path}")
+                                
+                                # Ingest
+                                ingest.ingest_paper(pdf_path, paper)
+                                st.success("Added to Database!")
+                                st.cache_data.clear()
             st.divider()
         
         if selected_indices:
             if st.button("⬇️ Bulk Download & Ingest Selected"):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                successes = 0
-                failures = 0
-                
-                for idx, i in enumerate(selected_indices):
-                    paper = st.session_state['search_results'][i]
-                    status_text.text(f"Downloading and ingesting {idx+1}/{len(selected_indices)}: {paper.get('title', 'Unknown')[:60]}")
-                    pdf_path, _ = download_paper_for_ingest(paper)
+                if use_bg_queue:
+                    queued = 0
+                    for i in selected_indices:
+                        paper = st.session_state['search_results'][i]
+                        queue_manager.enqueue_ingest_from_paper(paper, run_enrichment=auto_enrich_bg)
+                        queued += 1
+                    st.success(f"Queued {queued} background tasks.")
+                else:
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    successes = 0
+                    failures = 0
                     
-                    if pdf_path:
-                        ingest.ingest_paper(pdf_path, paper)
-                        successes += 1
-                    else:
-                        failures += 1
+                    for idx, i in enumerate(selected_indices):
+                        paper = st.session_state['search_results'][i]
+                        status_text.text(f"Downloading and ingesting {idx+1}/{len(selected_indices)}: {paper.get('title', 'Unknown')[:60]}")
+                        pdf_path, _ = download_paper_for_ingest(paper)
+                        
+                        if pdf_path:
+                            ingest.ingest_paper(pdf_path, paper)
+                            successes += 1
+                        else:
+                            failures += 1
+                        
+                        progress_bar.progress((idx + 1) / len(selected_indices))
                     
-                    progress_bar.progress((idx + 1) / len(selected_indices))
-                
-                status_text.text("")
-                st.success(f"Bulk ingest complete. Added {successes} papers. Failed {failures}.")
-                st.cache_data.clear()
+                    status_text.text("")
+                    st.success(f"Bulk ingest complete. Added {successes} papers. Failed {failures}.")
+                    st.cache_data.clear()
 
     st.markdown("---")
     st.subheader("Batch Import")
@@ -547,26 +599,11 @@ with st.sidebar:
             )
             
             if batch_auto_ingest and filtered:
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                successes = 0
-                failures = 0
-                
-                for i, paper in enumerate(filtered):
-                    status_text.text(f"Downloading and ingesting {i+1}/{len(filtered)}: {paper.get('title', 'Unknown')[:60]}")
-                    pdf_path, _ = download_paper_for_ingest(paper)
-                    
-                    if pdf_path:
-                        ingest.ingest_paper(pdf_path, paper)
-                        successes += 1
-                    else:
-                        failures += 1
-                    
-                    progress_bar.progress((i + 1) / len(filtered))
-                
-                status_text.text("")
-                st.success(f"Batch ingest complete. Added {successes} papers. Failed {failures}.")
-                st.cache_data.clear()
+                queued = 0
+                for paper in filtered:
+                    queue_manager.enqueue_ingest_from_paper(paper, run_enrichment=True)
+                    queued += 1
+                st.success(f"Batch ingest queued: {queued} background tasks.")
 
     if not batch_auto_ingest and st.session_state.get('batch_results'):
         st.markdown("#### Batch Results")
@@ -585,32 +622,19 @@ with st.sidebar:
                     batch_selected.append(i)
                 st.caption(f"Authors: {format_authors(paper.get('authors'))}")
                 st.caption(f"Published: {format_published(paper)}")
+                if paper.get("venue"):
+                    st.caption(f"Venue: {paper.get('venue')}")
                 st.write(paper.get('summary', 'No summary available.'))
             st.divider()
         
         if batch_selected:
             if st.button("⬇️ Bulk Download & Ingest Batch Selection"):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                successes = 0
-                failures = 0
-                
-                for idx, i in enumerate(batch_selected):
+                queued = 0
+                for i in batch_selected:
                     paper = st.session_state['batch_results'][i]
-                    status_text.text(f"Downloading and ingesting {idx+1}/{len(batch_selected)}: {paper.get('title', 'Unknown')[:60]}")
-                    pdf_path, _ = download_paper_for_ingest(paper)
-                    
-                    if pdf_path:
-                        ingest.ingest_paper(pdf_path, paper)
-                        successes += 1
-                    else:
-                        failures += 1
-                    
-                    progress_bar.progress((idx + 1) / len(batch_selected))
-                
-                status_text.text("")
-                st.success(f"Batch ingest complete. Added {successes} papers. Failed {failures}.")
-                st.cache_data.clear()
+                    queue_manager.enqueue_ingest_from_paper(paper, run_enrichment=True)
+                    queued += 1
+                st.success(f"Batch selection queued: {queued} background tasks.")
     st.markdown("---")
     st.subheader("Incremental Ingest data and PDFs")
     if st.button("Scan & Ingest New PDFs"):
@@ -636,6 +660,7 @@ with st.sidebar:
 
     st.subheader("Upload Local PDFs")
     uploaded_files = st.file_uploader("Choose PDF files", type="pdf", accept_multiple_files=True)
+    upload_bg_queue = st.checkbox("Queue uploaded PDFs in background", value=True, key="upload_bg_queue")
     
     if uploaded_files:
         st.write(f"selected {len(uploaded_files)} files")
@@ -667,6 +692,7 @@ with st.sidebar:
                 final_doi = "Unknown"
                 final_summary = "Manual Upload"
                 final_published = "Unknown"
+                final_venue = ""
                 
                 if resolved.get("found"):
                     final_title = resolved.get('title') or final_title
@@ -674,6 +700,7 @@ with st.sidebar:
                     final_doi = resolved.get('doi', 'Unknown')
                     final_summary = resolved.get('summary', 'Manual Upload')
                     final_published = resolved.get('published', 'Unknown')
+                    final_venue = resolved.get('venue') or final_venue
                 
                 # 4. Ingest
                 metadata = {
@@ -682,13 +709,23 @@ with st.sidebar:
                     "summary": final_summary,
                     "published": final_published,
                     "doi": final_doi,
-                    "entry_id": "manual_" + uploaded_file.name
+                    "venue": final_venue,
+                    "entry_id": "manual_" + uploaded_file.name,
+                    "tags": "",
+                    "is_favorite": False,
+                    "in_reading_list": False
                 }
-                ingest.ingest_paper(pdf_path, metadata)
+                if upload_bg_queue:
+                    queue_manager.enqueue_local_file(pdf_path, metadata, run_enrichment=True)
+                else:
+                    ingest.ingest_paper(pdf_path, metadata)
                 
                 progress_bar.progress((i + 1) / len(uploaded_files))
             
-            status_text.success(f"Successfully processed {len(uploaded_files)} files!")
+            if upload_bg_queue:
+                status_text.success(f"Queued {len(uploaded_files)} uploaded files.")
+            else:
+                status_text.success(f"Successfully processed {len(uploaded_files)} files!")
             st.cache_data.clear()
 
 # Metadata Enrichment Section
@@ -738,27 +775,246 @@ if st.sidebar.button("🔄 Enrich Papers"):
 # Deduplication Section
 st.sidebar.markdown("---")
 st.sidebar.subheader("🧹 Manage Library")
-if st.sidebar.button("Find & Remove Duplicates"):
+dedupe_threshold = st.sidebar.slider("Duplicate sensitivity", min_value=0.75, max_value=0.95, value=0.84, step=0.01)
+if st.sidebar.button("Find Duplicate Conflicts"):
     from src import dedupe
-    
-    st.sidebar.info("Scanning for duplicates...")
-    duplicates = dedupe.find_duplicates()
-    
-    if not duplicates:
-        st.sidebar.success("No duplicates found!")
+
+    st.sidebar.info("Scanning for duplicate conflicts...")
+    st.session_state["duplicate_groups"] = dedupe.find_duplicates(min_score=dedupe_threshold)
+    st.session_state["duplicate_threshold"] = dedupe_threshold
+
+groups = st.session_state.get("duplicate_groups", [])
+if groups:
+    st.sidebar.warning(f"Found {len(groups)} duplicate groups.")
+    with st.sidebar.expander("Review & Merge Conflicts", expanded=False):
+        for idx, group in enumerate(groups):
+            titles = [str(p.get("title", "Unknown"))[:28] for p in group]
+            label = f"Group {idx + 1} ({len(group)}): {titles[0]}"
+            with st.expander(label, expanded=False):
+                from src import dedupe
+                merged = dedupe.propose_merged_metadata(group)
+                st.caption("Proposed merged metadata:")
+                st.write({
+                    "title": merged.get("title"),
+                    "doi": merged.get("doi"),
+                    "venue": merged.get("venue"),
+                    "published": merged.get("published"),
+                    "tags": merged.get("tags"),
+                })
+                for j, p in enumerate(group):
+                    st.caption(
+                        f"{j + 1}. {p.get('title', 'Unknown')} | DOI={p.get('doi', '')} | "
+                        f"Year={p.get('published', '')} | Entry={p.get('entry_id', '')}"
+                    )
+                if st.button("Merge This Group", key=f"merge_dup_group_{idx}"):
+                    result = dedupe.merge_duplicates_group(group)
+                    removed = result.get("removed", [])
+                    st.success(f"Merged group {idx + 1}. Removed {len([r for r in removed if r[1]])} entries.")
+                    # Refresh conflict list after merge
+                    st.session_state["duplicate_groups"] = dedupe.find_duplicates(
+                        min_score=st.session_state.get("duplicate_threshold", dedupe_threshold)
+                    )
+                    st.cache_data.clear()
+                    st.rerun()
+else:
+    if "duplicate_groups" in st.session_state:
+        st.sidebar.success("No duplicate conflicts found.")
+
+# Background Task Queue Section
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚙️ Background Tasks")
+if st.sidebar.button("Refresh Task Status"):
+    st.rerun()
+
+task_summary = queue_manager.get_summary()
+col_tq_1, col_tq_2 = st.sidebar.columns(2)
+with col_tq_1:
+    st.metric("Pending", task_summary.get("pending", 0))
+with col_tq_2:
+    st.metric("Running", task_summary.get("running", 0))
+col_tq_3, col_tq_4 = st.sidebar.columns(2)
+with col_tq_3:
+    st.metric("Done", task_summary.get("completed", 0))
+with col_tq_4:
+    st.metric("Failed", task_summary.get("failed", 0))
+st.sidebar.caption(f"Cancelled: {task_summary.get('cancelled', 0)}")
+
+with st.sidebar.expander("Queue Operations", expanded=False):
+    include_cancelled_retry = st.checkbox(
+        "Retry cancelled too",
+        value=False,
+        key="queue_include_cancelled_retry",
+        help="If enabled, bulk retry includes cancelled tasks in addition to failed tasks.",
+    )
+    keep_latest_terminal = st.number_input(
+        "Keep latest terminal tasks",
+        min_value=10,
+        max_value=5000,
+        value=200,
+        step=10,
+        key="queue_keep_latest_terminal",
+        help="Older completed/failed/cancelled tasks are pruned first.",
+    )
+    col_q_1, col_q_2 = st.columns(2)
+    with col_q_1:
+        if st.button("Cancel Pending", key="queue_cancel_pending_bulk"):
+            cancelled = queue_manager.cancel_all_pending()
+            if cancelled > 0:
+                st.success(f"Cancelled {cancelled} pending tasks.")
+            else:
+                st.info("No pending tasks to cancel.")
+            st.rerun()
+    with col_q_2:
+        if st.button("Retry Failed", key="queue_retry_failed_bulk"):
+            retried = queue_manager.retry_all_failed(include_cancelled=include_cancelled_retry)
+            if retried > 0:
+                st.success(f"Queued {retried} retry tasks.")
+            else:
+                st.info("No eligible tasks to retry.")
+            st.rerun()
+    if st.button("Prune Task History", key="queue_prune_terminal_bulk"):
+        removed = queue_manager.prune_terminal(keep_latest=int(keep_latest_terminal))
+        if removed > 0:
+            st.success(f"Pruned {removed} terminal tasks.")
+        else:
+            st.info("No terminal tasks were pruned.")
+        st.rerun()
+
+with st.sidebar.expander("Task Details", expanded=False):
+    task_rows = queue_manager.list_tasks(limit=30)
+    if not task_rows:
+        st.caption("No tasks queued yet.")
     else:
-        st.sidebar.warning(f"Found {len(duplicates)} sets of duplicates.")
-        
-        total_removed = 0
-        for group in duplicates:
-            keep, removed = dedupe.merge_duplicates(group)
-            total_removed += len(removed)
-            # Log what happened
-            st.sidebar.text(f"Kept: {(keep.get('title') or 'Unknown')[:20]}...")
-            for items in removed:
-                st.sidebar.text(f"  Deleted: {items[0][:20]}...")
-        
-        st.sidebar.success(f"Cleanup complete! Removed {total_removed} duplicate entries.")
+        for idx, t in enumerate(task_rows):
+            tid = t.get("id", "")
+            status = t.get("status", "")
+            msg = t.get("message", "")
+            st.caption(f"{status.upper()} | {tid[:8]} | {msg}")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if status in ["pending", "running"]:
+                    if st.button("Cancel", key=f"cancel_task_{idx}_{tid[:8]}"):
+                        queue_manager.cancel_task(tid)
+                        st.rerun()
+            with col_b:
+                if status in ["failed", "cancelled"]:
+                    if st.button("Retry", key=f"retry_task_{idx}_{tid[:8]}"):
+                        queue_manager.retry_task(tid)
+                        st.rerun()
+
+# Watchlist & Digest Section
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔔 Watchlist")
+due_count = watchlist.due_watch_count()
+if due_count > 0:
+    st.sidebar.warning(f"{due_count} watch items are due. Run digest now.")
+watch_auto_enqueue = st.sidebar.checkbox(
+    "Auto-enqueue new papers",
+    value=True,
+    key="watch_auto_enqueue_new",
+    help="When running due watches, queue new papers for background ingest.",
+)
+watch_auto_enrich = st.sidebar.checkbox(
+    "Enqueue with enrichment",
+    value=True,
+    key="watch_auto_enrich_new",
+    help="Apply metadata enrichment in background ingest tasks created by watchlist runs.",
+)
+watch_auto_run_due = st.sidebar.checkbox(
+    "Auto-run due watches on refresh",
+    value=False,
+    key="watch_auto_run_due",
+    help="Automatically trigger due watch runs once when this page refreshes.",
+)
+if due_count == 0:
+    st.session_state["watch_auto_run_fired"] = False
+if not watch_auto_run_due:
+    st.session_state["watch_auto_run_fired"] = False
+if watch_auto_run_due and due_count > 0 and not st.session_state.get("watch_auto_run_fired", False):
+    auto_result = watchlist.run_due_watches(
+        max_results_per_watch=8,
+        enqueue_new=watch_auto_enqueue,
+        enqueue_fn=queue_manager.enqueue_ingest_from_paper if watch_auto_enqueue else None,
+        run_enrichment=watch_auto_enrich,
+    )
+    st.session_state["watch_auto_run_fired"] = True
+    st.session_state["watch_last_result"] = auto_result
+    st.rerun()
+
+watch_query = st.sidebar.text_input("Watch query", key="watch_query_input", placeholder="e.g., mechanism design")
+col_w1, col_w2 = st.sidebar.columns(2)
+with col_w1:
+    watch_type = st.selectbox("Type", ["keyword", "author"], index=0, key="watch_type_select")
+with col_w2:
+    watch_frequency = st.selectbox("Frequency", ["daily", "weekly"], index=0, key="watch_freq_select")
+watch_source = st.sidebar.selectbox("Source", ["arxiv", "semantic_scholar"], index=0, key="watch_source_select")
+if st.sidebar.button("Add Watch"):
+    if not watch_query.strip():
+        st.sidebar.warning("Watch query is required.")
+    else:
+        wid = watchlist.add_watch(
+            watch_query.strip(),
+            watch_type=watch_type,
+            source=watch_source,
+            frequency=watch_frequency,
+        )
+        st.sidebar.success(f"Watch added: {wid[:8]}")
+        st.rerun()
+
+if st.sidebar.button("Run Due Watches"):
+    result = watchlist.run_due_watches(
+        max_results_per_watch=8,
+        enqueue_new=watch_auto_enqueue,
+        enqueue_fn=queue_manager.enqueue_ingest_from_paper if watch_auto_enqueue else None,
+        run_enrichment=watch_auto_enrich,
+    )
+    st.session_state["watch_last_result"] = result
+    st.sidebar.success(
+        f"Watches run: {result.get('ran', 0)} | new papers: {result.get('new_papers', 0)} | queued: {result.get('queued_tasks', 0)}"
+    )
+    if result.get("digest_path"):
+        st.sidebar.caption(f"Digest: {result.get('digest_path')}")
+
+last_watch_run = st.session_state.get("watch_last_result")
+if last_watch_run:
+    st.sidebar.caption(
+        f"Last run summary: ran={last_watch_run.get('ran', 0)}, "
+        f"new={last_watch_run.get('new_papers', 0)}, queued={last_watch_run.get('queued_tasks', 0)}"
+    )
+
+with st.sidebar.expander("Watch Items", expanded=False):
+    watches = watchlist.list_watches()
+    if not watches:
+        st.caption("No watch entries.")
+    else:
+        for i, w in enumerate(watches):
+            st.caption(
+                f"{w.get('query')} | {w.get('source')} | {w.get('frequency')} | "
+                f"next={w.get('next_run', '')[:10]}"
+            )
+            col_a, col_b = st.columns(2)
+            with col_a:
+                label = "Disable" if w.get("enabled", True) else "Enable"
+                if st.button(label, key=f"toggle_watch_{i}_{w.get('id', '')[:8]}"):
+                    watchlist.toggle_watch(w.get("id"), not w.get("enabled", True))
+                    st.rerun()
+            with col_b:
+                if st.button("Delete", key=f"delete_watch_{i}_{w.get('id', '')[:8]}"):
+                    watchlist.remove_watch(w.get("id"))
+                    st.rerun()
+
+with st.sidebar.expander("Latest Digest", expanded=False):
+    digest_path = watchlist.get_latest_digest_path()
+    if digest_path and os.path.exists(digest_path):
+        st.caption(digest_path)
+        try:
+            with open(digest_path, "r", encoding="utf-8") as f:
+                digest_text = f.read()
+            st.text_area("Digest", value=digest_text, height=220, key="latest_digest_text")
+        except Exception as e:
+            st.warning(f"Failed to read digest: {e}")
+    else:
+        st.caption("No digest generated yet.")
 
 # Database Management Section
 st.sidebar.markdown("---")
@@ -823,6 +1079,10 @@ with st.sidebar.expander("🗑️ Manage Database"):
             edit_doi = st.text_input("DOI", value=str(target_paper.get('doi', '')))
             edit_entry_id = st.text_input("Entry ID optional", value=str(target_paper.get('entry_id', '')))
             edit_source = st.text_input("Source", value=str(target_paper.get('source', '')))
+            edit_venue = st.text_input("Venue", value=str(target_paper.get('venue', '')))
+            edit_tags = st.text_input("Tags (comma separated)", value=format_tags(target_paper.get('tags', '')))
+            edit_favorite = st.checkbox("Favorite", value=coerce_bool(target_paper.get('is_favorite')))
+            edit_reading_list = st.checkbox("Reading list", value=coerce_bool(target_paper.get('in_reading_list')))
         
             if st.button("💾 Save Metadata"):
                 authors_list = [a.strip() for a in str(edit_authors).split(",") if a.strip()]
@@ -835,8 +1095,12 @@ with st.sidebar.expander("🗑️ Manage Database"):
                     "authors": authors_list if authors_list else edit_authors,
                     "published": edit_year.strip() or target_paper.get('published'),
                     "doi": normalized_doi or edit_doi,
+                    "venue": edit_venue.strip() or target_paper.get('venue', ''),
                     "entry_id": edit_entry_id.strip() or target_paper.get('entry_id'),
                     "source": edit_source.strip() or target_paper.get('source'),
+                    "tags": edit_tags,
+                    "is_favorite": edit_favorite,
+                    "in_reading_list": edit_reading_list,
                     "arxiv_id": arxiv_id,
                     "openalex_id": openalex_id
                 }
@@ -910,6 +1174,24 @@ with tab1:
                 mime="application/json",
                 key="download_csl"
             )
+        if st.button("📥 Export All as RIS"):
+            ris_content = exports.export_library_ris()
+            st.download_button(
+                label="💾 Download RIS",
+                data=ris_content,
+                file_name="library.ris",
+                mime="application/x-research-info-systems",
+                key="download_ris"
+            )
+        if st.button("📥 Export All as Zotero JSON"):
+            zotero_content = exports.export_library_zotero_json()
+            st.download_button(
+                label="💾 Download Zotero JSON",
+                data=zotero_content,
+                file_name="library.zotero.json",
+                mime="application/json",
+                key="download_zotero_json"
+            )
         
     papers = load_papers_cached()
     
@@ -946,6 +1228,14 @@ with tab1:
             source_filter = st.selectbox("Source", source_options)
         with col_f3:
             author_filter = st.text_input("Author Contains", value="")
+
+        col_t1, col_t2, col_t3 = st.columns(3)
+        with col_t1:
+            tag_filter = st.text_input("Tag Contains", value="")
+        with col_t2:
+            favorites_only = st.checkbox("Favorites only", value=False)
+        with col_t3:
+            reading_list_only = st.checkbox("Reading list only", value=False)
         
         filtered_papers = []
         for p in papers:
@@ -962,6 +1252,14 @@ with tab1:
                 author_text = format_authors(p.get("authors", ""))
                 if author_filter.lower() not in author_text.lower():
                     continue
+            if tag_filter:
+                tags_text = format_tags(p.get("tags", ""))
+                if tag_filter.lower() not in tags_text.lower():
+                    continue
+            if favorites_only and not coerce_bool(p.get("is_favorite")):
+                continue
+            if reading_list_only and not coerce_bool(p.get("in_reading_list")):
+                continue
             filtered_papers.append(p)
         
         st.caption(f"Showing {len(filtered_papers)} papers after filters.")
@@ -1003,6 +1301,15 @@ with tab1:
                 with st.container():
                     st.markdown(f"**{format_title(paper)}**")
                     st.caption(f"Authors: {format_authors(paper.get('authors'))} | Year: {format_published(paper)}")
+                    if paper.get("venue"):
+                        st.caption(f"Venue: {paper.get('venue')}")
+                    tags_text = format_tags(paper.get("tags", ""))
+                    if tags_text:
+                        st.caption(f"Tags: {tags_text}")
+                    if coerce_bool(paper.get("is_favorite")):
+                        st.caption("Favorite: Yes")
+                    if coerce_bool(paper.get("in_reading_list")):
+                        st.caption("Reading list: Yes")
                     st.write(summary_text)
                     st.markdown("---")
         
@@ -1011,11 +1318,65 @@ with tab1:
             with st.expander(format_title(paper)):
                 st.write(f"Authors: {format_authors(paper.get('authors'))}")
                 st.write(f"Published: {format_published(paper)}")
+                st.write(f"Venue: {paper.get('venue', 'N/A')}")
+                st.write(f"Tags: {format_tags(paper.get('tags', '')) or 'N/A'}")
+                st.write(f"Favorite: {'Yes' if coerce_bool(paper.get('is_favorite')) else 'No'}")
+                st.write(f"Reading list: {'Yes' if coerce_bool(paper.get('in_reading_list')) else 'No'}")
                 st.write(f"Source: {paper.get('source', 'Unknown')}")
                 st.write(f"Summary: {paper.get('summary', 'No summary available.')}")
                 st.write(f"DOI: {paper.get('doi', 'N/A')}")
                 st.write(f"Vector Chunks: {paper['chunk_count']}")
+                parse_score = float(paper.get("parse_quality_score", 0.0) or 0.0)
+                parse_label = str(paper.get("parse_quality_label", "unknown"))
+                parse_pages = int(paper.get("parse_pages", 0) or 0)
+                parse_ocr_pages = int(paper.get("parse_ocr_pages", 0) or 0)
+                st.write(
+                    f"Parse Quality: {parse_score:.3f} ({parse_label}) | "
+                    f"Pages: {parse_pages} | OCR pages: {parse_ocr_pages}"
+                )
+                st.caption(
+                    f"Layout tags: table={int(paper.get('parse_table_lines', 0) or 0)}, "
+                    f"formula={int(paper.get('parse_formula_lines', 0) or 0)}, "
+                    f"figure_caption={int(paper.get('parse_figure_caption_lines', 0) or 0)}"
+                )
                 st.caption(f"Entry ID: {paper['entry_id']}")
+
+                paper_key_raw = str(paper.get("canonical_id") or paper.get("entry_id") or f"paper_{idx}")
+                paper_key = re.sub(r"[^A-Za-z0-9_]+", "_", paper_key_raw)
+                title_for_update = paper.get("title", "")
+
+                col_action_1, col_action_2 = st.columns(2)
+                with col_action_1:
+                    fav_label = "Unset Favorite" if coerce_bool(paper.get("is_favorite")) else "Mark Favorite"
+                    if st.button(fav_label, key=f"toggle_fav_{paper_key}"):
+                        database.update_paper_metadata_by_title(
+                            title_for_update,
+                            {"is_favorite": not coerce_bool(paper.get("is_favorite"))}
+                        )
+                        st.cache_data.clear()
+                        st.rerun()
+                with col_action_2:
+                    list_label = "Remove From Reading List" if coerce_bool(paper.get("in_reading_list")) else "Add To Reading List"
+                    if st.button(list_label, key=f"toggle_list_{paper_key}"):
+                        database.update_paper_metadata_by_title(
+                            title_for_update,
+                            {"in_reading_list": not coerce_bool(paper.get("in_reading_list"))}
+                        )
+                        st.cache_data.clear()
+                        st.rerun()
+
+                tag_value = st.text_input(
+                    "Edit tags (comma separated)",
+                    value=format_tags(paper.get("tags", "")),
+                    key=f"edit_tags_{paper_key}"
+                )
+                if st.button("Save Tags", key=f"save_tags_{paper_key}"):
+                    database.update_paper_metadata_by_title(
+                        title_for_update,
+                        {"tags": tag_value}
+                    )
+                    st.cache_data.clear()
+                    st.rerun()
                 
                 # Individual BibTeX copy
                 paper_bibtex = bibtex.generate_bibtex_entry(paper)
@@ -1025,18 +1386,159 @@ with tab1:
 with tab2:
     st.header("Search Literature")
     query = st.text_input("Enter a concept or question:", placeholder="e.g., Optimal mechanism for multi-item auctions")
+
+    col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns([1, 1, 1, 1, 1])
+    with col_s1:
+        n_results = st.slider("Results", min_value=3, max_value=15, value=5)
+    with col_s2:
+        use_expansion = st.checkbox("Query expansion", value=True)
+    with col_s3:
+        show_snippets = st.checkbox("Evidence snippets", value=True)
+    with col_s4:
+        highlight_matches = st.checkbox("Highlight matches", value=True)
+    with col_s5:
+        retrieval_mode = st.selectbox("Retrieval Mode", ["auto", "hybrid", "vector", "bm25"], index=0)
+
+    col_c1, col_c2, col_c3 = st.columns([1, 1, 1])
+    with col_c1:
+        confidence_policy = st.selectbox(
+            "Confidence Policy",
+            ["auto", "off"],
+            index=0,
+            help="auto: low confidence refuse, medium confidence downgrade to extractive evidence-only output.",
+        )
+    with col_c2:
+        refuse_threshold = st.slider(
+            "Refuse threshold",
+            min_value=0.10,
+            max_value=0.70,
+            value=0.28,
+            step=0.01,
+            help="Below this score, the assistant refuses to synthesize an answer.",
+        )
+    with col_c3:
+        downgrade_threshold = st.slider(
+            "Downgrade threshold",
+            min_value=0.20,
+            max_value=0.90,
+            value=0.48,
+            step=0.01,
+            help="Between refuse and downgrade thresholds, output is evidence-only observations.",
+        )
+
+    snippet_len = 360
+    if show_snippets:
+        snippet_len = st.slider("Snippet length", min_value=160, max_value=600, value=360)
+
     if query:
-        results = rag.query_db(query, n_results=5)
-        
-        for i in range(len(results['documents'][0])):
-            doc = results['documents'][0][i]
-            meta = results['metadatas'][0][i]
-            score = results['distances'][0][i]
-            
-            with st.container():
-                st.markdown(f"**Source:** {meta.get('title', 'Unknown')} — Chunk {meta.get('chunk_index')}")
-                st.info(doc)
-                st.divider()
+        expanded = {"expanded_query": query, "extra_terms": [], "rules_matched": []}
+        if use_expansion:
+            expanded = search_utils.expand_query(query)
+            if expanded.get("extra_terms"):
+                st.caption(f"Expanded terms: {', '.join(expanded['extra_terms'])}")
+
+        tuned_query = expanded.get("expanded_query", query)
+        if retrieval_mode == "auto":
+            tuned = retrieval.auto_tune(tuned_query, n_results=n_results)
+            st.caption(
+                f"Auto mode -> {tuned.get('mode')} | top-k={tuned.get('n_results')} | reason={tuned.get('reason')}"
+            )
+        results = rag.query_db(tuned_query, n_results=n_results, mode=retrieval_mode)
+
+        terms = search_utils.extract_query_terms(query)
+        if expanded.get("extra_terms"):
+            extra_term_str = " ".join(expanded.get("extra_terms", []))
+            terms.extend(search_utils.extract_query_terms(extra_term_str))
+
+        docs = results.get('documents', [[]])[0] if results.get('documents') else []
+        metas = results.get('metadatas', [[]])[0] if results.get('metadatas') else []
+        distances = results.get('distances', [[]])[0] if results.get('distances') else []
+
+        if not docs:
+            st.info("No results found.")
+        else:
+            for i in range(len(docs)):
+                doc = docs[i]
+                meta = metas[i] if i < len(metas) else {}
+                distance = distances[i] if i < len(distances) else None
+                score = None
+                if distance is not None:
+                    score = 1.0 / (1.0 + float(distance))
+
+                with st.container():
+                    title = meta.get('title', 'Unknown')
+                    chunk_idx = meta.get('chunk_index')
+                    header = f"**Source:** {title}"
+                    if chunk_idx is not None:
+                        header += f" — Chunk {chunk_idx}"
+                    if score is not None:
+                        header += f" — Score {score:.3f}"
+                    st.markdown(header)
+                    venue = meta.get("venue")
+                    published = meta.get("published")
+                    if venue or published:
+                        line_parts = []
+                        if venue:
+                            line_parts.append(f"Venue: {venue}")
+                        if published:
+                            line_parts.append(f"Published: {published}")
+                        st.caption(" | ".join(line_parts))
+
+                    if show_snippets:
+                        snippet = search_utils.extract_snippet(doc, terms, window=snippet_len)
+                        if highlight_matches:
+                            display = search_utils.highlight_text(snippet, terms)
+                            st.markdown(display, unsafe_allow_html=True)
+                        else:
+                            st.write(snippet)
+                        with st.expander("Show full chunk"):
+                            if highlight_matches:
+                                full_text = search_utils.highlight_text(doc, terms)
+                                st.markdown(full_text, unsafe_allow_html=True)
+                            else:
+                                st.write(doc)
+                    else:
+                        if highlight_matches:
+                            display = search_utils.highlight_text(doc, terms)
+                            st.markdown(display, unsafe_allow_html=True)
+                        else:
+                            st.write(doc)
+                    st.divider()
+
+        st.markdown("#### Evidence-Grounded Answer")
+        if st.button("Generate Answer With Citations", key="btn_answer_with_citations"):
+            with st.spinner("Generating evidence-grounded answer..."):
+                answer_pack = rag.answer_with_evidence(
+                    tuned_query,
+                    n_results=max(8, n_results),
+                    mode=retrieval_mode,
+                    confidence_policy=confidence_policy,
+                    refuse_threshold=refuse_threshold,
+                    downgrade_threshold=downgrade_threshold,
+                )
+                st.markdown(answer_pack.get("answer", "No answer generated."))
+
+                confidence_info = answer_pack.get("confidence", {})
+                if confidence_info:
+                    st.caption(
+                        "Confidence: "
+                        f"{confidence_info.get('score', 0.0):.3f} | "
+                        f"band={confidence_info.get('band', 'unknown')} | "
+                        f"decision={answer_pack.get('decision', 'unknown')}"
+                    )
+                    reasons = confidence_info.get("reasons", [])
+                    if reasons:
+                        st.caption(f"Confidence reasons: {', '.join(reasons)}")
+
+                evidence_rows = answer_pack.get("evidence", [])
+                if evidence_rows:
+                    st.caption("Source confidence")
+                    for ev in evidence_rows:
+                        st.caption(
+                            f"[{ev.get('label')}] {ev.get('title')} | chunk {ev.get('chunk_index')} | confidence={ev.get('score', 0.0):.3f}"
+                        )
+
+                st.code(answer_pack.get("copy_markdown", ""), language="markdown")
 
 with tab3:
     st.header("Academic Sentence Polisher")
@@ -1311,19 +1813,25 @@ with tab8:
 
 with tab9:
     st.header("📊 Citation Graph")
-    st.caption("Visualize citation relationships between papers in your library.")
+    st.caption("Visualize citation/co-citation/coupling/author networks and identify unread recommendations.")
     
     # Lazy import
     from src import citation_graph
     
     st.info("""
-    This feature builds a citation network by:
-    1. Looking up each paper in Semantic Scholar
-    2. Finding citation links between your library papers
-    3. Displaying an interactive graph
+    This feature builds multiple networks by:
+    1. Matching your papers to Semantic Scholar
+    2. Fetching references for each paper
+    3. Building citation, co-citation, bibliographic coupling, and author collaboration graphs
     
-    ⚠️ Note: Only papers found in Semantic Scholar will appear. This may take a few minutes for large libraries.
+    ⚠️ Only papers found in Semantic Scholar will appear. Large libraries may take several minutes.
     """)
+
+    network_type = st.selectbox(
+        "Network Type",
+        ["citation", "co-citation", "bibliographic-coupling", "author-collaboration"],
+        index=0
+    )
     
     if st.button("🔄 Build Citation Graph"):
         all_papers = load_papers_cached()
@@ -1339,17 +1847,27 @@ with tab9:
                 status_text.text(f"{message} {current}/{total}")
             
             with st.spinner("Building citation graph..."):
-                G, paper_info = citation_graph.build_citation_graph(
+                pack = citation_graph.build_enhanced_networks(
                     all_papers, 
                     progress_callback=update_progress
                 )
                 
                 progress_bar.empty()
                 status_text.empty()
-                
-                st.success(f"Found {len(G.nodes())} papers with {len(G.edges())} citation links.")
-                
-                # Display the graph
+
+                paper_info = pack.get("paper_info", {})
+                if network_type == "citation":
+                    G = pack.get("citation_graph")
+                elif network_type == "co-citation":
+                    G = pack.get("cocitation_graph")
+                elif network_type == "bibliographic-coupling":
+                    G = pack.get("coupling_graph")
+                else:
+                    G = pack.get("author_graph")
+
+                st.success(f"Built {network_type} network: {len(G.nodes())} nodes, {len(G.edges())} links.")
+
+                # Display graph
                 fig = citation_graph.graph_to_plotly(G, paper_info)
                 st.plotly_chart(fig, use_container_width=True)
                 
@@ -1363,6 +1881,50 @@ with tab9:
                     with col3:
                         density = len(G.edges()) / (len(G.nodes()) * (len(G.nodes()) - 1)) if len(G.nodes()) > 1 else 0
                         st.metric("Graph Density", f"{density:.2%}")
+
+                st.markdown("#### Recommended Unread Papers")
+                recs = pack.get("recommendations", [])
+                if not recs:
+                    st.caption("No unread recommendations available.")
+                else:
+                    for r in recs[:10]:
+                        st.caption(
+                            f"{r.get('title')} | score={r.get('score')} | "
+                            f"citation_links={r.get('citation_links')} | "
+                            f"co-citation_links={r.get('cocitation_links')} | "
+                            f"coupling_links={r.get('coupling_links')}"
+                        )
+
+                st.markdown("#### Key Bridge Papers")
+                bridge_papers = pack.get("bridge_papers", [])
+                if not bridge_papers:
+                    st.caption("No bridge papers identified.")
+                else:
+                    for b in bridge_papers[:10]:
+                        st.caption(
+                            f"{b.get('title')} | bridge_score={b.get('bridge_score')} | "
+                            f"betweenness={b.get('betweenness')} | degree={b.get('degree')} | "
+                            f"articulation={b.get('is_articulation')}"
+                        )
+                        examples = b.get("path_examples", []) or []
+                        for ex in examples[:2]:
+                            st.caption(f"Path: {ex}")
+
+                st.markdown("#### Potential Missing Papers")
+                missing_recs = pack.get("missing_recommendations", [])
+                if not missing_recs:
+                    st.caption("No potential missing papers detected from shared external references.")
+                else:
+                    for m in missing_recs[:12]:
+                        st.caption(
+                            f"{m.get('title')} | score={m.get('score')} | support_count={m.get('support_count')} | "
+                            f"citation_count={m.get('citation_count')} | year={m.get('year')}"
+                        )
+                        supporters = m.get("supporting_titles", []) or []
+                        if supporters:
+                            st.caption(f"Supported by: {', '.join(supporters[:4])}")
+                        for ex in (m.get("path_examples", []) or [])[:2]:
+                            st.caption(f"Path: {ex}")
 
 with tab10:
     st.header("🧰 Diagnostics & Tuning")
@@ -1384,7 +1946,9 @@ with tab10:
     
     st.subheader("Retrieval Tuning Runtime")
     defaults = diagnostics.get_retrieval_defaults()
-    mode = st.selectbox("Retrieval Mode", ["vector", "bm25", "hybrid"], index=["vector","bm25","hybrid"].index(defaults["mode"]))
+    mode_options = ["auto", "vector", "bm25", "hybrid"]
+    default_mode = defaults["mode"] if defaults["mode"] in mode_options else "hybrid"
+    mode = st.selectbox("Retrieval Mode", mode_options, index=mode_options.index(default_mode))
     alpha = st.slider("Hybrid Alpha vector weight", min_value=0.0, max_value=1.0, value=float(defaults["alpha"]), step=0.05)
     reranker_model = st.text_input("Reranker Model optional", value=defaults["reranker_model"])
     reranker_top_k = st.number_input("Reranker Top-K", min_value=1, max_value=100, value=int(defaults["reranker_top_k"]))

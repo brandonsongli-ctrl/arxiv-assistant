@@ -10,6 +10,7 @@ import re
 from typing import List, Dict, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from src import database, scraper
+from src.metadata_utils import compute_canonical_id, normalize_doi, extract_arxiv_id, extract_openalex_id
 
 def get_papers_needing_enrichment(force_recheck: bool = False) -> List[Dict]:
     """
@@ -25,7 +26,8 @@ def get_papers_needing_enrichment(force_recheck: bool = False) -> List[Dict]:
         is_missing_info = (
             paper.get('authors') in ['Unknown', ['Unknown'], None] or
             paper.get('published') in ['Unknown', None] or
-            paper.get('doi') in ['Unknown', None, '']
+            paper.get('doi') in ['Unknown', None, ''] or
+            paper.get('venue') in ['Unknown', None, '']
         )
         
         # Condition 2: Force Recheck (Manual/Local Files only)
@@ -48,7 +50,32 @@ def update_paper_metadata(title: str, new_metadata: Dict) -> int:
     Update metadata for all chunks belonging to a paper (identified by title).
     Returns the number of chunks updated.
     """
-    return database.update_paper_metadata_by_title(title, new_metadata)
+    payload = dict(new_metadata or {})
+
+    # Merge with current record so canonical_id reflects both existing and newly fetched fields.
+    current = {}
+    for paper in database.get_all_papers():
+        if str(paper.get("title", "")).strip().lower() == str(title).strip().lower():
+            current = paper
+            break
+    merged = dict(current)
+    merged.update(payload)
+
+    if merged.get("doi"):
+        merged["doi"] = normalize_doi(merged.get("doi"))
+    if not merged.get("arxiv_id") and merged.get("entry_id"):
+        merged["arxiv_id"] = extract_arxiv_id(str(merged.get("entry_id")))
+    if not merged.get("openalex_id") and merged.get("entry_id"):
+        merged["openalex_id"] = extract_openalex_id(str(merged.get("entry_id")))
+
+    payload.update({
+        "doi": merged.get("doi"),
+        "arxiv_id": merged.get("arxiv_id"),
+        "openalex_id": merged.get("openalex_id"),
+        "canonical_id": compute_canonical_id(merged),
+    })
+
+    return database.update_paper_metadata_by_title(title, payload)
 
 # =============================================================================
 # OPTIMIZED PDF EXTRACTION
@@ -410,4 +437,3 @@ def enrich_all_papers(force_recheck: bool = False, progress_callback=None) -> Di
     
     results['message'] = f"Enriched {results['success']}/{total} papers successfully."
     return results
-

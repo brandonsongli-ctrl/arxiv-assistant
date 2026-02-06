@@ -100,12 +100,15 @@ def generate_bibtex_entry(paper: Dict) -> str:
     # Build entry
     entry_id = paper.get('entry_id', '')
     doi = paper.get('doi', '')
+    venue = paper.get('venue', '')
     
     # Determine entry type and add arXiv-specific fields
     lines = [f"@article{{{cite_key},"]
     lines.append(f"  title = {{{title}}},")
     lines.append(f"  author = {{{authors}}},")
     lines.append(f"  year = {{{year}}},")
+    if venue and str(venue).strip() not in ["Unknown", "None", "N/A"]:
+        lines.append(f"  journal = {{{sanitize_latex(str(venue))}}},")
     
     # Add DOI if available
     if doi and doi != 'Unknown' and doi != 'None':
