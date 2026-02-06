@@ -91,4 +91,3 @@
 ### Docker Compose 说明
 
 - `docker-compose.yml` 会将 ChromaDB 持久化到 `/app/data/chroma_db`，搜索历史持久化到 `/app/data/history/search_history.json`。
-
