@@ -31,7 +31,13 @@ def run_startup_checks() -> Dict:
     if status.get("available"):
         checks.append({"name": "LLM", "status": "ok", "detail": f"{status.get('backend')}:{status.get('model')}"})
     else:
-        checks.append({"name": "LLM", "status": "warning", "detail": "No LLM available (set OPENAI_API_KEY or run Ollama)"})
+        checks.append(
+            {
+                "name": "LLM",
+                "status": "warning",
+                "detail": "No LLM available (configure in sidebar LLM Settings, set OPENAI_API_KEY, or run Ollama)",
+            }
+        )
     
     # Optional deps
     for pkg in ["rank_bm25", "umap", "hdbscan", "plotly", "scholarly"]:

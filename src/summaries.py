@@ -6,14 +6,14 @@ Generates paper-level summary cards using retrieved chunks.
 
 from typing import Optional
 from src import database
-from src.rag import ask_llm, LLM_AVAILABLE
+from src import rag
 
 
 def generate_paper_summary(title: str, max_chunks: int = 5, max_chars_per_chunk: int = 1200) -> Optional[str]:
     """
     Generate a concise paper summary using the first N chunks of the paper.
     """
-    if not LLM_AVAILABLE:
+    if not rag.llm_status().get("available"):
         return None
     
     result = database.get_chunks_by_title(title)
@@ -49,4 +49,4 @@ EXCERPTS:
 {context}
 
 Summary:"""
-    return ask_llm(prompt)
+    return rag.ask_llm(prompt)

@@ -306,10 +306,89 @@ def download_paper_for_ingest(paper):
 
 queue_manager = task_queue.get_queue()
 
+
+def _init_llm_settings_state():
+    if "llm_setting_backend_pref" not in st.session_state:
+        st.session_state["llm_setting_backend_pref"] = os.getenv("ARXIV_ASSISTANT_LLM_BACKEND", "auto")
+    if "llm_setting_openai_key" not in st.session_state:
+        # Keep runtime key session-only; do not mirror environment key in UI.
+        st.session_state["llm_setting_openai_key"] = ""
+    if "llm_setting_ollama_host" not in st.session_state:
+        st.session_state["llm_setting_ollama_host"] = os.getenv("OLLAMA_HOST", "http://localhost:11434/v1")
+    if "llm_setting_openai_model" not in st.session_state:
+        st.session_state["llm_setting_openai_model"] = os.getenv("OPENAI_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini"))
+    if "llm_setting_ollama_model" not in st.session_state:
+        st.session_state["llm_setting_ollama_model"] = os.getenv("OLLAMA_MODEL", os.getenv("LLM_MODEL", "llama3.2"))
+
+
+def _apply_runtime_llm_settings(force: bool = False) -> dict:
+    signature = (
+        str(st.session_state.get("llm_setting_backend_pref", "auto")),
+        str(st.session_state.get("llm_setting_openai_key", "")),
+        str(st.session_state.get("llm_setting_ollama_host", "")),
+        str(st.session_state.get("llm_setting_openai_model", "")),
+        str(st.session_state.get("llm_setting_ollama_model", "")),
+    )
+    if (not force) and st.session_state.get("_llm_runtime_signature") == signature:
+        return rag.llm_status()
+
+    status = rag.configure_llm(
+        openai_api_key=(st.session_state.get("llm_setting_openai_key", "").strip() or None),
+        ollama_host=st.session_state.get("llm_setting_ollama_host", ""),
+        backend_preference=st.session_state.get("llm_setting_backend_pref", "auto"),
+        openai_model=st.session_state.get("llm_setting_openai_model", ""),
+        ollama_model=st.session_state.get("llm_setting_ollama_model", ""),
+    )
+    st.session_state["_llm_runtime_signature"] = signature
+    return status
+
+
+_init_llm_settings_state()
+_apply_runtime_llm_settings()
+
 # Sidebar: Manage Database
 with st.sidebar:
     st.header("Manage Database")
-    
+
+    st.subheader("LLM Settings")
+    with st.expander("Configure API / Backend", expanded=False):
+        current_llm_status = rag.llm_status()
+        if current_llm_status.get("available"):
+            st.caption(
+                f"Current: `{current_llm_status.get('backend')}` / "
+                f"`{current_llm_status.get('model')}`"
+            )
+        else:
+            st.caption("Current: unavailable")
+
+        with st.form("llm_settings_form"):
+            st.selectbox(
+                "Backend Preference",
+                options=["auto", "openai", "ollama"],
+                key="llm_setting_backend_pref",
+                help="auto: OpenAI first when key exists, otherwise fallback to Ollama.",
+            )
+            st.text_input(
+                "OpenAI API Key optional",
+                key="llm_setting_openai_key",
+                type="password",
+                help="Stored only in current app session.",
+            )
+            st.text_input("OpenAI Model", key="llm_setting_openai_model")
+            st.text_input("Ollama Host", key="llm_setting_ollama_host")
+            st.text_input("Ollama Model", key="llm_setting_ollama_model")
+            apply_llm = st.form_submit_button("Apply LLM Settings")
+
+        if apply_llm:
+            current_llm_status = _apply_runtime_llm_settings(force=True)
+            if current_llm_status.get("available"):
+                st.success(
+                    f"LLM ready: {current_llm_status.get('backend')} "
+                    f"({current_llm_status.get('model')})"
+                )
+            else:
+                st.warning("LLM unavailable. Check API key, backend choice, or Ollama host.")
+
     st.subheader("Add Papers")
     if "search_query" not in st.session_state:
         st.session_state["search_query"] = "Mechanism Design"
@@ -1269,7 +1348,10 @@ with tab1:
             if st.button("✨ Generate Missing Summaries"):
                 llm_status = rag.llm_status()
                 if not llm_status.get("available"):
-                    st.warning("LLM not available. Set OPENAI_API_KEY or run Ollama to generate summaries.")
+                    st.warning(
+                        "LLM not available. Configure in sidebar LLM Settings, "
+                        "set OPENAI_API_KEY, or run Ollama."
+                    )
                     st.stop()
                 missing = [p for p in filtered_papers if not p.get('summary') or str(p.get('summary')).strip() in ["", "Unknown", "None"]]
                 if not missing:

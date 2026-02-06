@@ -4,31 +4,85 @@ from openai import OpenAI
 from src import database, retrieval
 
 # LLM Configuration
-# Priority: OPENAI_API_KEY (cloud) -> OLLAMA_HOST (local)
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434/v1")
+# Priority:
+# 1) user-provided OpenAI key (runtime)
+# 2) OPENAI_API_KEY environment variable
+# 3) local Ollama host
 
-# Determine which LLM backend to use
-if OPENAI_API_KEY:
-    # Use OpenAI API (cloud deployment)
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
-    LLM_AVAILABLE = True
-    LLM_BACKEND = "openai"
-else:
-    # Try local Ollama
+DEFAULT_OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434/v1")
+DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini"))
+DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", os.getenv("LLM_MODEL", "llama3.2"))
+DEFAULT_BACKEND_PREFERENCE = os.getenv("ARXIV_ASSISTANT_LLM_BACKEND", "auto").strip().lower()
+
+OPENAI_API_KEY = ""
+OLLAMA_HOST = DEFAULT_OLLAMA_HOST
+LLM_MODEL = None
+LLM_AVAILABLE = False
+LLM_BACKEND = "none"
+LLM_BACKEND_PREFERENCE = DEFAULT_BACKEND_PREFERENCE
+client = None
+
+
+def configure_llm(
+    openai_api_key: str = None,
+    ollama_host: str = None,
+    backend_preference: str = None,
+    openai_model: str = None,
+    ollama_model: str = None,
+) -> dict:
+    """
+    Configure LLM backend at runtime.
+    Returns status dict for UI display.
+    """
+    global OPENAI_API_KEY, OLLAMA_HOST, LLM_MODEL, LLM_AVAILABLE, LLM_BACKEND, LLM_BACKEND_PREFERENCE, client
+
+    key = openai_api_key if openai_api_key is not None else os.getenv("OPENAI_API_KEY", "")
+    key = str(key or "").strip()
+
+    host = ollama_host if ollama_host is not None else DEFAULT_OLLAMA_HOST
+    host = str(host or DEFAULT_OLLAMA_HOST).strip()
+
+    backend = backend_preference if backend_preference is not None else DEFAULT_BACKEND_PREFERENCE
+    backend = str(backend or "auto").strip().lower()
+    if backend not in {"auto", "openai", "ollama"}:
+        backend = "auto"
+
+    openai_model_name = str(openai_model or DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
+    ollama_model_name = str(ollama_model or DEFAULT_OLLAMA_MODEL).strip() or DEFAULT_OLLAMA_MODEL
+
+    OPENAI_API_KEY = key
+    OLLAMA_HOST = host
+    LLM_BACKEND_PREFERENCE = backend
+
+    # Prefer OpenAI when key exists and backend allows it.
+    if backend in {"auto", "openai"} and key:
+        client = OpenAI(api_key=key)
+        LLM_MODEL = openai_model_name
+        LLM_AVAILABLE = True
+        LLM_BACKEND = "openai"
+        return llm_status()
+
+    if backend == "openai":
+        client = None
+        LLM_MODEL = openai_model_name
+        LLM_AVAILABLE = False
+        LLM_BACKEND = "none"
+        return llm_status()
+
+    # Try local Ollama when backend allows it.
     try:
-        client = OpenAI(base_url=OLLAMA_HOST, api_key='ollama')
-        LLM_MODEL = os.getenv("LLM_MODEL", "llama3.2")
-        # Test connection
+        client = OpenAI(base_url=host, api_key="ollama")
         client.models.list()
+        LLM_MODEL = ollama_model_name
         LLM_AVAILABLE = True
         LLM_BACKEND = "ollama"
     except Exception:
         client = None
-        LLM_MODEL = None
+        LLM_MODEL = ollama_model_name if backend == "ollama" else None
         LLM_AVAILABLE = False
         LLM_BACKEND = "none"
+
+    return llm_status()
 
 
 def llm_status() -> dict:
@@ -36,8 +90,13 @@ def llm_status() -> dict:
         "available": LLM_AVAILABLE,
         "backend": LLM_BACKEND,
         "model": LLM_MODEL,
-        "ollama_host": OLLAMA_HOST
+        "ollama_host": OLLAMA_HOST,
+        "backend_preference": LLM_BACKEND_PREFERENCE,
+        "has_openai_key": bool(OPENAI_API_KEY),
     }
+
+
+configure_llm()
 
 
 DEFAULT_REFUSE_THRESHOLD = float(os.getenv("ARXIV_ASSISTANT_CONFIDENCE_REFUSE_THRESHOLD", "0.28"))
@@ -70,7 +129,10 @@ def ask_llm(prompt: str, model: str = None) -> str:
     Returns error message if no LLM is available.
     """
     if not LLM_AVAILABLE:
-        return "⚠️ LLM not available. Set OPENAI_API_KEY environment variable or run Ollama locally."
+        return (
+            "⚠️ LLM not available. Configure OPENAI API Key in app sidebar (LLM Settings), "
+            "set OPENAI_API_KEY environment variable, or run Ollama locally."
+        )
     
     if model is None:
         model = LLM_MODEL
