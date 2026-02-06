@@ -16,7 +16,6 @@ from src.metadata_utils import compute_canonical_id, normalize_doi, extract_arxi
 st.set_page_config(page_title="Local Academic Assistant", layout="wide")
 
 st.title("📚 Local Academic Literature Assistant")
-st.markdown("Focused on **Microeconomic Theory, Information Design, Contract Theory, and Mechanism Design**.")
 
 @st.cache_data(show_spinner=False)
 def load_papers_cached():
