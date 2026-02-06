@@ -1,5 +1,7 @@
 # Local Academic Assistant - Usage Guide
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 ## Setup
 
 1.  **Install Dependencies**:
