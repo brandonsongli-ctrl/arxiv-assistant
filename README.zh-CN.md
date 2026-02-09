@@ -1,93 +1,116 @@
-# Local Academic Assistant - 使用说明（中文）
+# 🧠 AI Academic Assistant (学术助手)
+![Banner](assets/banner.png)
+
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://streamlit.io)
+
+**您的本地个性化研究伙伴。**  
+利用本地 LLM 的强大功能，发现、管理和分析学术文献。
+无云端依赖，无隐私风险。
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-## 环境准备
+---
 
-1. **安装依赖**  
-   在项目根目录打开终端并执行：
-   ```bash
-   pip install -r requirements.txt
-   ```
-   说明：
-   - Google Scholar 检索需要 `scholarly`（已包含在 `requirements.txt`）。
-   - 句式模式分析需要 `spacy` 和英文模型：
-     ```bash
-     python -m spacy download en_core_web_sm
-     ```
-   - 可选聚类功能需要 `umap-learn` 和 `hdbscan`。
+## 🚀 快速开始
 
-2. **安装并运行 Ollama（可选，本地 LLM）**  
-   - 从 [ollama.com](https://ollama.com) 下载并安装。  
-   - 在另一个终端执行 `ollama run llama3`（或 `mistral`）下载并启动模型。  
-   - 默认监听端口为 `11434`。
+几分钟内即可启动并运行。
 
-## 运行应用
+1.  **安装依赖**
+    ```bash
+    pip install -r requirements.txt
+    python -m spacy download en_core_web_sm
+    ```
 
-1. 启动 Streamlit：
-   ```bash
-   streamlit run src/app.py
-   ```
-2. 浏览器会自动打开应用页面。
+2.  **安装并启动 Ollama**
+    访问 [ollama.com](https://ollama.com) 下载并安装 Ollama。
+    安装完成后，在终端运行以下命令以拉取并启动模型：
+    ```bash
+    ollama run llama3
+    ```
 
-## 功能概览
+3.  **启动应用**
+    ```bash
+    streamlit run src/app.py
+    ```
 
-1. **数据库管理**：在侧边栏检索 arXiv 主题（例如 “Mechanism Design”）并下载论文。  
-2. **文献语义检索**：在 “Semantic Search” 页签中按问题或概念检索。  
-3. **学术句子润色**：在 “Rewrite” 页签粘贴草稿句子，系统会检索相似语料并进行改写。  
-4. **研究想法生成**：输入主题后，系统基于你的文献库给出新方向建议。  
-5. **批量导入**：支持多关键词检索并自动导入去重后的结果。  
-6. **元数据编辑**：可在 UI 直接修改标题/作者/年份/DOI。  
-7. **丰富导出**：支持导出 BibTeX、JSON、CSL-JSON、RIS、Zotero JSON。  
-8. **论文摘要卡片**：可生成论文级摘要。  
-9. **综述参考文献**：文献综述支持参考文献清单。  
-10. **风格化改写**：可切换 journal / working paper / grant 风格。  
-11. **批量下载**：可勾选多条检索结果一键导入。  
-12. **结构化想法输出**：研究想法支持结构化格式。  
-13. **搜索历史**：保存并快速复用近期搜索。  
-14. **快速筛选**：按年份、来源、作者过滤文献库。  
-15. **增量导入**：扫描 `data/pdfs` 并仅导入新增文件。  
-16. **诊断工具**：启动时检查 DB/LLM/依赖状态。  
-17. **检索参数调优**：运行时调节检索模式、alpha、reranker。  
-18. **检索体验升级**：查询扩展、关键词高亮、证据片段长度调节。  
-19. **元数据覆盖增强**：venue 在检索、富化、导入和导出链路中贯通。  
-20. **知识管理**：支持 tags/favorites/reading list 与快速筛选、行内操作。  
-21. **后台任务队列**：异步下载 -> 导入 -> 富化，支持取消/重试/恢复。  
-22. **冲突合并 UI**：可视化重复组审核与元数据保留式合并。  
-23. **证据化回答**：生成带引用标签（`[S1]`, `[S2]`）与置信度的回答。  
-24. **图谱分析**：支持 citation / co-citation / coupling / author collaboration。  
-25. **Watchlist 与 Digest**：支持按关键词/作者的日/周监控与摘要文件。  
-26. **OCR 回退**：对低文本 PDF 可选 OCR 提取。
+---
 
-## 配置项
+## ✨ 功能特性
 
-可通过环境变量覆盖默认配置：
+| 核心能力 | 高级分析 | 管理工具 |
+| :--- | :--- | :--- |
+| **🔍 智能检索**<br>在 arXiv 和本地文献库中进行语义检索。 | **💡 灵感生成**<br>基于您的文献库构思新的研究方向。 | **📂 文献库管理**<br>标记、筛选和组织论文。 |
+| **📥 一键导入**<br>即时下载 arXiv 论文并建立索引。 | **✍️ 风格润色**<br>将句子改写为专业的学术风格。 | **🏷️ 元数据编辑**<br>轻松修复标题、作者和 DOI。 |
+| **📝 摘要生成**<br>生成简洁的论文摘要卡片，快速阅读。 | **📊 图谱分析**<br>可视化引用网络和共同作者关系。 | **📤 丰富导出**<br>支持 BibTeX, RIS, Zotero JSON 导出。 |
 
-- `ARXIV_ASSISTANT_DB_DIR`：自定义 ChromaDB 存储路径  
-- `ARXIV_ASSISTANT_EMBEDDING_MODEL`：`sentence-transformers` 模型名  
-- `ARXIV_ASSISTANT_CHUNK_SIZE`：分块大小（字符）  
-- `ARXIV_ASSISTANT_CHUNK_OVERLAP`：分块重叠（字符）  
-- `ARXIV_ASSISTANT_RETRIEVAL_MODE`：`vector`、`bm25`、`hybrid`（默认）  
-- `ARXIV_ASSISTANT_HYBRID_ALPHA`：混合检索中向量分数权重（0-1）  
-- `ARXIV_ASSISTANT_RERANKER_MODEL`：可选 CrossEncoder 重排模型名  
-- `ARXIV_ASSISTANT_RERANKER_TOP_K`：重排候选 Top-K  
-- `ARXIV_ASSISTANT_HYBRID_CANDIDATE_MULTIPLIER`：混合检索候选扩展倍数  
-- `ARXIV_ASSISTANT_HISTORY_PATH`：搜索历史文件路径  
-- `ARXIV_ASSISTANT_TASK_QUEUE_PATH`：后台任务队列 JSON 路径  
-- `ARXIV_ASSISTANT_WATCHLIST_PATH`：watchlist JSON 路径  
-- `ARXIV_ASSISTANT_DIGEST_DIR`：digest 输出目录  
-- `ARXIV_ASSISTANT_ENABLE_OCR_FALLBACK`：`1`/`0` 开关 OCR 回退  
-- `ARXIV_ASSISTANT_OCR_MAX_PAGES`：触发 OCR 时最多处理前 N 页  
-- `ARXIV_ASSISTANT_OCR_MIN_TEXT_CHARS`：触发 OCR 的最小文本阈值  
-- `SCHOLAR_PROXY`：Google Scholar 单代理 URL（例如 `http://user:pass@host:port`）  
-- `SCHOLAR_USE_FREE_PROXY`：设为 `1` 尝试免费代理  
-- `SCHOLAR_USE_TOR`：设为 `1` 尝试 Tor 代理
+---
 
-### OCR 可选依赖
+## 🛠️ 技术栈
 
-- Python 包：`pdf2image`、`pytesseract`  
-- 系统工具：`poppler`、`tesseract`
+基于现代、强大的开源工具构建：
 
-### Docker Compose 说明
+*   **UI**: [Streamlit](https://streamlit.io/)
+*   **LLM 编排**: [LangChain](https://www.langchain.com/)
+*   **向量数据库**: [ChromaDB](https://www.trychroma.com/)
+*   **本地推理**: [Ollama](https://ollama.com/)
 
-- `docker-compose.yml` 会将 ChromaDB 持久化到 `/app/data/chroma_db`，搜索历史持久化到 `/app/data/history/search_history.json`。
+---
+
+## 📦 详细安装说明
+
+### 前置要求
+*   Python 3.10+
+*   [Ollama](https://ollama.com) (用于本地 LLM 推理)
+
+### 安装步骤
+1.  **克隆仓库**
+    ```bash
+    git clone https://github.com/yourusername/arxiv-assistant.git
+    cd arxiv_assistant
+    ```
+
+2.  **安装 Ollama**
+    用于运行本地大语言模型。
+    *   访问 [ollama.com](https://ollama.com) 下载并安装。
+    *   验证安装：`ollama --version`
+    *   拉取模型：`ollama run llama3`
+
+3.  **安装 Python 依赖**
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+4.  **安装 Spacy 模型**
+    用于句子分析。
+    ```bash
+    python -m spacy download en_core_web_sm
+    ```
+
+5.  **可选：OCR 支持**
+    用于扫描版 PDF（无文本层）。
+    *   并在系统安装 `poppler` 和 `tesseract`。
+    *   安装 Python 依赖：`pip install pdf2image pytesseract`
+    *   在 `.env` 中设置 `ARXIV_ASSISTANT_ENABLE_OCR_FALLBACK=1`。
+
+---
+
+## ⚙️ 配置
+
+通过环境变量或 `.env` 文件自定义您的体验。
+
+| 变量名 | 描述 | 默认值 |
+| :--- | :--- | :--- |
+| `ARXIV_ASSISTANT_DB_DIR` | ChromaDB 存储路径 | `./data/chroma_db` |
+| `ARXIV_ASSISTANT_EMBEDDING_MODEL` | Embedding 模型 | `all-MiniLM-L6-v2` |
+| `ARXIV_ASSISTANT_RETRIEVAL_MODE` | 检索模式 (vector/bm25/hybrid) | `hybrid` |
+| `ARXIV_ASSISTANT_ENABLE_OCR_FALLBACK` | 启用扫描版 PDF OCR | `0` |
+
+*查看 `src/config.py` 获取所有可用选项。*
+
+---
+
+## 🤝 贡献
+
+欢迎提交 Pull Request 来改进本项目！
