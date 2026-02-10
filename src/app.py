@@ -1429,7 +1429,7 @@ with tab1:
                 col_action_1, col_action_2 = st.columns(2)
                 with col_action_1:
                     fav_label = "Unset Favorite" if coerce_bool(paper.get("is_favorite")) else "Mark Favorite"
-                    if st.button(fav_label, key=f"toggle_fav_{paper_key}"):
+                    if st.button(fav_label, key=f"toggle_fav_{idx}_{paper_key}"):
                         database.update_paper_metadata_by_title(
                             title_for_update,
                             {"is_favorite": not coerce_bool(paper.get("is_favorite"))}
@@ -1438,7 +1438,7 @@ with tab1:
                         st.rerun()
                 with col_action_2:
                     list_label = "Remove From Reading List" if coerce_bool(paper.get("in_reading_list")) else "Add To Reading List"
-                    if st.button(list_label, key=f"toggle_list_{paper_key}"):
+                    if st.button(list_label, key=f"toggle_list_{idx}_{paper_key}"):
                         database.update_paper_metadata_by_title(
                             title_for_update,
                             {"in_reading_list": not coerce_bool(paper.get("in_reading_list"))}
@@ -1449,9 +1449,9 @@ with tab1:
                 tag_value = st.text_input(
                     "Edit tags (comma separated)",
                     value=format_tags(paper.get("tags", "")),
-                    key=f"edit_tags_{paper_key}"
+                    key=f"edit_tags_{idx}_{paper_key}"
                 )
-                if st.button("Save Tags", key=f"save_tags_{paper_key}"):
+                if st.button("Save Tags", key=f"save_tags_{idx}_{paper_key}"):
                     database.update_paper_metadata_by_title(
                         title_for_update,
                         {"tags": tag_value}
