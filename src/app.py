@@ -8,7 +8,7 @@ from datetime import date, timedelta
 # Add project root to path so we can import src modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src import scraper, ingest, rag, retrieval, search_utils, task_queue, watchlist
+from src import scraper, ingest, rag, retrieval, search_utils, task_queue, watchlist, acadwrite
 from src import bibtex, citations, patterns, clustering, database, dedupe, exports, summaries, history, diagnostics
 from src.metadata_utils import compute_canonical_id, normalize_doi, extract_arxiv_id, extract_openalex_id
 # review is imported lazily inside its tab to avoid circular import issues
@@ -1202,17 +1202,18 @@ with st.sidebar.expander("🗑️ Manage Database"):
             st.rerun()
 
 # Main Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
-    "📚 Local Library", 
-    "🔍 Semantic Search", 
-    "✍️ Rewrite / Polish", 
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+    "📚 Local Library",
+    "🔍 Semantic Search",
+    "✍️ Rewrite / Polish",
     "💡 Idea Generation",
     "📝 Sentence Patterns",
     "🔬 Topic Clusters",
     "📎 Citation Finder",
     "📝 Literature Review",
     "📊 Citation Graph",
-    "🧰 Diagnostics"
+    "🧰 Diagnostics",
+    "🎓 Acadwrite"
 ])
 
 with tab1:
@@ -2044,6 +2045,189 @@ with tab10:
             candidate_multiplier=int(candidate_multiplier)
         )
         st.success("Applied runtime retrieval settings for this session.")
+
+# ── Tab 11: Acadwrite ─────────────────────────────────────────────────────────
+with tab11:
+    st.header("🎓 Acadwrite - 反向找文献")
+    st.caption(
+        "Paste your draft or article text. Acadwrite extracts key topics, searches external "
+        "sources in parallel, and ranks results by semantic relevance to your writing — no LLM required."
+    )
+
+    # ── Input ──────────────────────────────────────────────────────────────────
+    aw_text = st.text_area(
+        "Article / Draft Text",
+        placeholder=(
+            "Paste your full draft, abstract, or any section of your paper here. "
+            "Acadwrite will identify the core topics and find related papers to cite."
+        ),
+        height=280,
+        key="aw_article_text",
+    )
+
+    # ── Source selection ───────────────────────────────────────────────────────
+    st.markdown("**Search Sources**")
+    col_src1, col_src2, col_src3, col_src4, col_src5 = st.columns(5)
+    with col_src1:
+        aw_use_arxiv = st.checkbox("arXiv", value=True, key="aw_src_arxiv")
+    with col_src2:
+        aw_use_ss = st.checkbox("Semantic Scholar", value=True, key="aw_src_ss")
+    with col_src3:
+        aw_use_nber = st.checkbox("NBER", value=False, key="aw_src_nber")
+    with col_src4:
+        aw_use_ssrn = st.checkbox("SSRN", value=False, key="aw_src_ssrn")
+    with col_src5:
+        aw_use_gs = st.checkbox("Google Scholar", value=False, key="aw_src_gs")
+
+    # ── Advanced options ───────────────────────────────────────────────────────
+    with st.expander("Advanced Options", expanded=False):
+        aw_n_queries = st.slider(
+            "Number of search queries to extract",
+            min_value=1, max_value=5, value=3,
+            help="More queries = broader coverage, slower search.",
+            key="aw_n_queries",
+        )
+        aw_max_per_query = st.slider(
+            "Max results per query per source",
+            min_value=3, max_value=15, value=8,
+            key="aw_max_per_query",
+        )
+        aw_use_bg_queue = st.checkbox(
+            "Use background queue for downloads",
+            value=True,
+            key="aw_use_bg_queue",
+        )
+        aw_auto_enrich = st.checkbox(
+            "Run metadata enrichment on download",
+            value=True,
+            key="aw_auto_enrich",
+        )
+
+    # ── Run ────────────────────────────────────────────────────────────────────
+    if st.button("🔍 Find References", type="primary", key="aw_run_btn"):
+        if not aw_text.strip():
+            st.warning("Please paste some article text first.")
+        else:
+            selected_sources = []
+            if aw_use_arxiv:
+                selected_sources.append("arxiv")
+            if aw_use_ss:
+                selected_sources.append("semanticscholar")
+            if aw_use_nber:
+                selected_sources.append("nber")
+            if aw_use_ssrn:
+                selected_sources.append("ssrn")
+            if aw_use_gs:
+                selected_sources.append("google_scholar")
+
+            if not selected_sources:
+                st.warning("Please select at least one source.")
+            else:
+                with st.spinner("Extracting topics and searching sources in parallel..."):
+                    aw_result = acadwrite.run_acadwrite_pipeline(
+                        article_text=aw_text,
+                        sources=selected_sources,
+                        n_queries=aw_n_queries,
+                        max_per_query=aw_max_per_query,
+                    )
+                st.session_state["aw_result"] = aw_result
+
+    # ── Results ────────────────────────────────────────────────────────────────
+    if "aw_result" in st.session_state:
+        aw_result = st.session_state["aw_result"]
+        aw_queries = aw_result.get("queries", [])
+        aw_papers = aw_result.get("papers", [])
+
+        if aw_queries:
+            st.markdown("**Extracted Search Queries**")
+            for q in aw_queries:
+                st.code(q, language=None)
+
+        if not aw_papers:
+            st.warning(
+                "No results found. Try selecting more sources or using a longer text excerpt."
+            )
+        else:
+            st.success(
+                f"Found {len(aw_papers)} unique papers "
+                f"(from {aw_result.get('raw_count', len(aw_papers))} results before dedup)"
+            )
+            st.markdown("---")
+
+            _AW_SOURCE_COLORS = {
+                "arxiv":                    "#b31b1b",
+                "semanticscholar":          "#1a73e8",
+                "nber":                     "#2e7d32",
+                "ssrn":                     "#6a1b9a",
+                "google_scholar":           "#f57c00",
+                "google_scholar_fallback":  "#ef6c00",
+                "openalex":                 "#0277bd",
+            }
+
+            for aw_i, aw_paper in enumerate(aw_papers):
+                aw_rel_pct = aw_paper.get("acadwrite_relevance_pct", 0.0)
+                aw_title = format_title(aw_paper)
+                aw_authors = format_authors(aw_paper.get("authors"))
+                aw_year = format_published(aw_paper)
+                aw_source = str(aw_paper.get("source", "")).lower()
+                aw_source_label = aw_source.replace("_", " ").title()
+                aw_badge_color = _AW_SOURCE_COLORS.get(aw_source, "#555555")
+
+                col_aw_title, col_aw_score = st.columns([5, 1])
+                with col_aw_title:
+                    st.markdown(f"**{aw_i + 1}. {aw_title}**")
+                with col_aw_score:
+                    st.markdown(
+                        f"<span style='background:{aw_badge_color};color:white;"
+                        f"padding:2px 8px;border-radius:4px;font-size:12px'>"
+                        f"{aw_source_label}</span>&nbsp;"
+                        f"<b style='color:#1a73e8'>{aw_rel_pct:.1f}%</b>",
+                        unsafe_allow_html=True,
+                    )
+
+                st.caption(f"Authors: {aw_authors} | Year: {aw_year}")
+
+                aw_abstract = aw_paper.get("summary") or aw_paper.get("abstract") or ""
+                if aw_abstract and aw_abstract != "No abstract available.":
+                    with st.expander("Abstract", expanded=(aw_i < 3)):
+                        st.write(
+                            aw_abstract[:800] + ("..." if len(aw_abstract) > 800 else "")
+                        )
+
+                col_aw_dl, col_aw_bib, col_aw_url = st.columns([2, 2, 2])
+                with col_aw_dl:
+                    if aw_paper.get("pdf_url"):
+                        if st.button("Add to Library", key=f"aw_add_{aw_i}",
+                                     help="Download and ingest this paper into your local library."):
+                            if st.session_state.get("aw_use_bg_queue", True):
+                                aw_task_id = queue_manager.enqueue_ingest_from_paper(
+                                    aw_paper,
+                                    run_enrichment=st.session_state.get("aw_auto_enrich", True),
+                                )
+                                st.success(f"Queued for download (task {aw_task_id[:8]})")
+                            else:
+                                with st.spinner(f"Downloading {aw_title[:40]}..."):
+                                    aw_pdf_path, aw_err = download_paper_for_ingest(aw_paper)
+                                    if aw_err:
+                                        st.error(aw_err)
+                                    elif aw_pdf_path:
+                                        ingest.ingest_paper(aw_pdf_path, aw_paper)
+                                        st.success("Added to library!")
+                                        st.cache_data.clear()
+                    else:
+                        st.caption("No PDF available")
+
+                with col_aw_bib:
+                    aw_paper_bibtex = bibtex.generate_bibtex_entry(aw_paper)
+                    with st.expander("BibTeX"):
+                        st.code(aw_paper_bibtex, language="bibtex")
+
+                with col_aw_url:
+                    aw_url = aw_paper.get("pdf_url") or aw_paper.get("entry_id") or ""
+                    if aw_url and str(aw_url).startswith("http"):
+                        st.markdown(f"[Open Paper]({aw_url})")
+
+                st.divider()
 
 # Footer
 st.sidebar.markdown("---")
